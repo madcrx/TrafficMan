@@ -1,0 +1,257 @@
+/* TrafficMan Design System — CSS tokens */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+@font-face {
+  font-family: 'Sansation';
+  src: url('/fonts/Sansation-Light.ttf') format('truetype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Sansation';
+  src: url('/fonts/Sansation-LightItalic.ttf') format('truetype');
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Sansation';
+  src: url('/fonts/Sansation-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Sansation';
+  src: url('/fonts/Sansation-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Sansation';
+  src: url('/fonts/Sansation-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Sansation';
+  src: url('/fonts/Sansation-BoldItalic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root {
+  /* Brand */
+  --hivis-300: #FFB680;
+  --hivis-400: #FF8A33;
+  --hivis-500: #FF6A00;
+  --hivis-600: #D95400;
+  --hivis-700: #B34400;
+
+  /* Semantic */
+  --stop-500:    #E11D2A;
+  --stop-600:    #B7141F;
+  --stop-50:     #FDECEE;
+  --go-500:      #00A85A;
+  --go-600:      #008648;
+  --go-50:       #E6F6EE;
+  --caution-500: #FFC400;
+  --caution-600: #D9A600;
+  --caution-50:  #FFF7D6;
+  --info-500:    #0A84FF;
+  --info-600:    #0067CC;
+  --info-50:     #E5F1FF;
+
+  /* Neutrals */
+  --paper-0:   #FFFFFF;
+  --paper-50:  #F6F7F9;
+  --paper-100: #EBEEF3;
+  --paper-200: #DDE2E9;
+  --steel-200: #C7CCD4;
+  --steel-300: #A8B0BB;
+  --steel-400: #7E8693;
+  --ink-500:   #5C6677;
+  --ink-700:   #2A3344;
+  --ink-900:   #0B1220;
+
+  /* Roles */
+  --bg-app:     var(--paper-50);
+  --bg-surface: var(--paper-0);
+  --bg-sunken:  var(--paper-100);
+  --fg-default: var(--ink-900);
+  --fg-muted:   var(--ink-700);
+  --fg-subtle:  var(--ink-500);
+  --border-default: var(--steel-200);
+  --border-strong:  var(--steel-300);
+
+  /* Type */
+  --font-ui:      'Sansation', system-ui, -apple-system, sans-serif;
+  --font-display: 'Sansation', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+
+  --weight-light:   300;
+  --weight-regular: 400;
+  --weight-bold:    700;
+
+  --text-display: 56px;
+  --text-h1:      32px;
+  --text-h2:      24px;
+  --text-h3:      20px;
+  --text-body:    17px;
+  --text-small:   15px;
+  --text-label:   14px;
+  --text-mono:    16px;
+  --text-caption: 13px;
+
+  --lh-display: 64px;
+  --lh-h1:      40px;
+  --lh-h2:      30px;
+  --lh-h3:      26px;
+  --lh-body:    24px;
+  --lh-small:   22px;
+  --lh-label:   18px;
+  --lh-caption: 18px;
+
+  --tracking-label:   0.06em;
+  --tracking-display: -0.01em;
+
+  /* Spacing (8pt) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+
+  /* Radii */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-pill: 999px;
+
+  /* Shadows */
+  --elev-1:    0 1px 2px rgba(11,18,32,0.08);
+  --elev-2:    0 4px 12px rgba(11,18,32,0.10);
+  --elev-3:    0 12px 32px rgba(11,18,32,0.16);
+  --elev-flat: inset 0 -2px 0 rgba(11,18,32,0.12);
+  --focus-ring: 0 0 0 3px var(--hivis-500), 0 0 0 5px var(--paper-0);
+
+  /* Touch targets */
+  --touch-mobile:  56px;
+  --touch-tablet:  64px;
+  --touch-desktop: 40px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in:  cubic-bezier(0.4, 0.0, 0.6, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+
+  /* Layout */
+  --topbar-h-mobile: 72px;
+  --topbar-h-desk:   64px;
+  --bottombar-h:     88px;
+  --rail-desk:       240px;
+  --rail-tablet:     96px;
+}
+
+[data-theme="dark"] {
+  --paper-0:   #14171F;
+  --paper-50:  #0B0E14;
+  --paper-100: #1C2030;
+  --paper-200: #262B3D;
+  --steel-200: #2F354A;
+  --steel-300: #444B66;
+  --steel-400: #6B7390;
+  --ink-500:   #A8B0BB;
+  --ink-700:   #D2D7E0;
+  --ink-900:   #F2F4F8;
+  --hivis-500: #FF7A1A;
+  --hivis-600: #E36100;
+  --bg-app:     var(--paper-50);
+  --bg-surface: var(--paper-0);
+  --bg-sunken:  var(--paper-100);
+  --fg-default: var(--ink-900);
+  --fg-muted:   var(--ink-700);
+  --fg-subtle:  var(--ink-500);
+  --border-default: var(--steel-200);
+  --border-strong:  var(--steel-300);
+  --focus-ring: 0 0 0 3px var(--hivis-500), 0 0 0 5px var(--paper-50);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-app);
+  color: var(--fg-default);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--lh-body);
+  font-weight: var(--weight-regular);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Table utilities shared across surfaces */
+table.tm-table,
+table.audit {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-ui);
+}
+table.tm-table th,
+table.audit th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-500);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 12px 16px;
+  border-bottom: 1.5px solid var(--steel-200);
+  background: var(--paper-50);
+  position: sticky;
+  top: 0;
+}
+table.tm-table td {
+  padding: 14px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-900);
+  border-bottom: 1px solid var(--paper-100);
+}
+table.audit th {
+  padding: 10px 14px;
+}
+table.audit td {
+  padding: 11px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-900);
+  border-bottom: 1px solid var(--paper-100);
+  vertical-align: middle;
+}
+table.tm-table tr,
+table.audit tr {
+  cursor: pointer;
+  transition: background var(--dur-fast);
+}
+table.tm-table tbody tr:hover,
+table.audit tr:hover td {
+  background: var(--paper-50);
+}
