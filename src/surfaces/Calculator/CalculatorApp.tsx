@@ -59,6 +59,29 @@ function saveHistory(entries: HistoryEntry[]): void {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries)); } catch { /* quota */ }
 }
 
+function exportHistory(history: HistoryEntry[]): void {
+  const blob = new Blob([JSON.stringify(history, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `trafficman-history-${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function isValidHistoryEntry(e: unknown): e is HistoryEntry {
+  if (!e || typeof e !== 'object') return false;
+  const entry = e as Record<string, unknown>;
+  return (
+    typeof entry.id === 'number' &&
+    typeof entry.timestamp === 'string' &&
+    entry.inputs !== null && typeof entry.inputs === 'object' &&
+    entry.result !== null && typeof entry.result === 'object'
+  );
+}
+
 // ── Field id context — associates label with first input inside Field ──
 const FieldIdCtx = createContext<string>('');
 
@@ -798,13 +821,37 @@ const Step5 = memo(function Step5({ inp, set }: { inp: WizardInputs; set: SetFn 
 
 // ── History panel with focus trap ─────────────────────────────────
 
-function HistoryPanel({ history, onLoad, onClose }: {
+function HistoryPanel({ history, onLoad, onClose, onExport, onImport }: {
   history: HistoryEntry[];
   onLoad: (entry: HistoryEntry) => void;
   onClose: () => void;
+  onExport: () => void;
+  onImport: (entries: HistoryEntry[]) => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLButtonElement>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      try {
+        const parsed = JSON.parse(evt.target?.result as string);
+        if (!Array.isArray(parsed)) throw new Error('Expected an array of history entries');
+        const valid = parsed.filter(isValidHistoryEntry);
+        if (valid.length === 0) throw new Error('No valid history entries found in file');
+        onImport(valid);
+        setImportError(null);
+      } catch (err) {
+        setImportError(err instanceof Error ? err.message : 'Invalid file format');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   // Focus trap + Escape key
   useEffect(() => {
@@ -845,20 +892,58 @@ function HistoryPanel({ history, onLoad, onClose }: {
       >
         <div style={{
           padding: '20px 24px', borderBottom: '1px solid var(--border-default)',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
-          <div>
-            <div id="history-panel-title" style={{ fontSize: 16, fontWeight: 700 }}>Calculation History</div>
-            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 2 }}>
-              {history.length} saved calculation{history.length !== 1 ? 's' : ''}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div>
+              <div id="history-panel-title" style={{ fontSize: 16, fontWeight: 700 }}>Calculation History</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 2 }}>
+                {history.length} saved calculation{history.length !== 1 ? 's' : ''}
+              </div>
             </div>
+            <button ref={firstFocusRef} onClick={onClose}
+              aria-label="Close history panel"
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', fontSize: 20,
+                color: 'var(--fg-subtle)', padding: '4px 8px',
+              }}>×</button>
           </div>
-          <button ref={firstFocusRef} onClick={onClose}
-            aria-label="Close history panel"
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer', fontSize: 20,
-              color: 'var(--fg-subtle)', padding: '4px 8px',
-            }}>×</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={onExport}
+              disabled={history.length === 0}
+              aria-label="Export history as JSON file"
+              style={{
+                flex: 1, padding: '7px 0', borderRadius: 7,
+                border: '1.5px solid var(--border-default)',
+                background: 'var(--bg-surface)', color: 'var(--fg-default)',
+                fontSize: 12, fontWeight: 700, cursor: history.length === 0 ? 'not-allowed' : 'pointer',
+                fontFamily: 'inherit', opacity: history.length === 0 ? 0.5 : 1,
+              }}>⬇ Export JSON</button>
+            <button
+              onClick={() => importRef.current?.click()}
+              aria-label="Import history from JSON file"
+              style={{
+                flex: 1, padding: '7px 0', borderRadius: 7,
+                border: '1.5px solid var(--border-default)',
+                background: 'var(--bg-surface)', color: 'var(--fg-default)',
+                fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              }}>⬆ Import JSON</button>
+            <input
+              ref={importRef}
+              type="file"
+              accept="application/json,.json"
+              aria-hidden="true"
+              tabIndex={-1}
+              style={{ display: 'none' }}
+              onChange={handleImportFile}
+            />
+          </div>
+          {importError && (
+            <div role="alert" style={{
+              marginTop: 8, padding: '6px 10px', borderRadius: 6,
+              background: '#F8D7DA', color: '#721C24', fontSize: 12,
+            }}>{importError}</div>
+          )}
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
           {history.length === 0 && (
@@ -956,6 +1041,14 @@ export function CalculatorApp() {
             history={history}
             onLoad={(entry) => { setInp(entry.inputs); setResult(entry.result); }}
             onClose={() => setShowHistory(false)}
+            onExport={() => exportHistory(history)}
+            onImport={imported => {
+              setHistory(prev => {
+                const existingIds = new Set(prev.map(h => h.id));
+                const newEntries = imported.filter(e => !existingIds.has(e.id));
+                return [...prev, ...newEntries].slice(-HISTORY_MAX);
+              });
+            }}
           />
         )}
       </>
@@ -1109,6 +1202,14 @@ export function CalculatorApp() {
           history={history}
           onLoad={(entry) => { setInp(entry.inputs); setResult(entry.result); setShowHistory(false); }}
           onClose={() => setShowHistory(false)}
+          onExport={() => exportHistory(history)}
+          onImport={imported => {
+            setHistory(prev => {
+              const existingIds = new Set(prev.map(h => h.id));
+              const newEntries = imported.filter(e => !existingIds.has(e.id));
+              return [...prev, ...newEntries].slice(-HISTORY_MAX);
+            });
+          }}
         />
       )}
     </div>
