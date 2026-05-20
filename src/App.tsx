@@ -4,10 +4,12 @@ import { DesktopApp } from './surfaces/Desktop/DesktopApp';
 import { MobileApp }  from './surfaces/Mobile/MobileApp';
 import { TabletApp }  from './surfaces/Tablet/TabletApp';
 import { DashboardApp } from './surfaces/Dashboard/DashboardApp';
+import { CalculatorApp } from './surfaces/Calculator/CalculatorApp';
 
-type Surface = 'desktop' | 'tablet' | 'mobile' | 'dashboard';
+type Surface = 'calculator' | 'desktop' | 'tablet' | 'mobile' | 'dashboard';
 
 const surfaces: Array<{ id: Surface; label: string; desc: string; frame: string }> = [
+  { id: 'calculator', label: 'Calculator', desc: 'TMP calculation tool',    frame: 'none'   },
   { id: 'desktop',   label: 'Desktop',   desc: 'Planner workstation',    frame: 'desk'   },
   { id: 'tablet',    label: 'Tablet',    desc: 'In-truck rugged device', frame: 'tablet' },
   { id: 'mobile',    label: 'Mobile',    desc: 'Field controller phone',  frame: 'phone'  },
@@ -105,37 +107,40 @@ function BrowserFrame({ children }: { children: React.ReactNode }) {
 }
 
 export function App() {
-  const [surface, setSurface] = useState<Surface>('desktop');
+  const [surface, setSurface] = useState<Surface>('calculator');
 
   const renderSurface = () => {
     switch (surface) {
-      case 'desktop':   return <DesktopFrame><DesktopApp/></DesktopFrame>;
-      case 'tablet':    return <TabletFrame><TabletApp/></TabletFrame>;
-      case 'mobile':    return <PhoneFrame><MobileApp/></PhoneFrame>;
-      case 'dashboard': return <BrowserFrame><DashboardApp/></BrowserFrame>;
+      case 'calculator': return <CalculatorApp />;
+      case 'desktop':    return <DesktopFrame><DesktopApp/></DesktopFrame>;
+      case 'tablet':     return <TabletFrame><TabletApp/></TabletFrame>;
+      case 'mobile':     return <PhoneFrame><MobileApp/></PhoneFrame>;
+      case 'dashboard':  return <BrowserFrame><DashboardApp/></BrowserFrame>;
     }
   };
 
+  const isFullPage = surface === 'calculator';
+
   return (
-    <div style={{ minHeight: '100vh', background: '#0D1018', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+    <div style={{ minHeight: '100vh', background: '#0D1018', display: 'flex', flexDirection: 'column' }}>
 
       {/* Header nav */}
       <div style={{
-        width: '100%', padding: '20px 40px',
-        display: 'flex', alignItems: 'center', gap: 32,
+        width: '100%', padding: '12px 32px',
+        display: 'flex', alignItems: 'center', gap: 24, flexShrink: 0,
         borderBottom: '1px solid #1E2230',
       }}>
-        <img src="/assets/logo-wordmark-onDark.svg" height="28" alt="TrafficMan"/>
-        <div style={{ width: 1, height: 24, background: '#2A3344' }}/>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <img src="/assets/logo-wordmark-onDark.svg" height="24" alt="TrafficMan"/>
+        <div style={{ width: 1, height: 20, background: '#2A3344' }}/>
+        <div style={{ display: 'flex', gap: 2 }}>
           {surfaces.map(s => {
             const active = surface === s.id;
             return (
               <button key={s.id} onClick={() => setSurface(s.id)} style={{
-                padding: '8px 18px', borderRadius: 8, border: 'none',
+                padding: '7px 16px', borderRadius: 8, border: 'none',
                 background: active ? C.hivis : 'transparent',
                 color: active ? C.ink900 : '#A8B0BB',
-                fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+                fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
                 cursor: 'pointer', letterSpacing: '0.01em',
               }}>
                 {s.label}
@@ -152,17 +157,23 @@ export function App() {
         <span style={{
           fontSize: 11, color: '#5C6677', fontFamily: 'JetBrains Mono, monospace',
           letterSpacing: '0.06em', textTransform: 'uppercase',
-        }}>TrafficMan Design System</span>
+        }}>TrafficMan</span>
       </div>
 
       {/* Surface viewport */}
-      <div style={{
-        flex: 1, width: '100%', display: 'flex',
-        alignItems: 'center', justifyContent: 'center',
-        padding: '48px 40px', overflow: 'auto',
-      }}>
-        {renderSurface()}
-      </div>
+      {isFullPage ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {renderSurface()}
+        </div>
+      ) : (
+        <div style={{
+          flex: 1, display: 'flex',
+          alignItems: 'center', justifyContent: 'center',
+          padding: '48px 40px', overflow: 'auto',
+        }}>
+          {renderSurface()}
+        </div>
+      )}
     </div>
   );
 }
