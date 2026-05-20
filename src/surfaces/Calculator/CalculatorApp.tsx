@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { C } from '../../components/tokens';
-import type { WizardInputs, AustralianState, RoadClassification, WorksType, ControlMethod, RoadGeometry, WeatherCondition } from './types';
-import { WORKS_TYPE_LABELS, suggestStopTime } from './standards';
+import type {
+  WizardInputs, AustralianState, RoadClassification, WorksType, WorksCategory,
+  ControlMethod, RoadGeometry, WeatherCondition,
+} from './types';
+import { WORKS_TYPE_LABELS, DESIGN_STEPS, suggestStopTime } from './standards';
 import { calculate } from './engine';
 import type { CalculationResult } from './engine';
 import { ReportView } from './ReportView';
@@ -15,9 +18,10 @@ const defaultInputs: WizardInputs = {
   projectName: '', projectRef: '', date: new Date().toISOString().split('T')[0],
   preparedBy: '', location: '',
   roadName: '', classification: 'arterial', postedSpeed: 60,
-  lanesInDirection: 1, laneWidth: 3.5, medianDivided: false,
+  lanesInDirection: 1, laneWidth: 3.5, medianDivided: false, medianWidth: 0,
   geometry: 'straight', curveRadius: 0, sightIssue: false,
-  worksType: 'lane_closure_2lane', worksDescription: '', worksLength: 50,
+  worksCategory: 'static', worksType: 'past_lane_closure',
+  worksDescription: '', worksLength: 50,
   duration: 'day_works', nightWorks: false,
   workersOnFoot: true, numberOfWorkers: 2, workerProximity: 2,
   plantOnSite: false, plantProximity: 3,
@@ -28,10 +32,17 @@ const defaultInputs: WizardInputs = {
   nearIntersection: false, intersectionDistance: 0,
   controlMethod: 'stop_slow_bats', numberOfControllers: 2,
   arrowBoard: false, vms: false, overrideTemp: false, manualTempSpeed: 40,
-  maxStopTime: 0,  // 0 = auto-estimate from zone length
+  maxStopTime: 0,
 };
 
-// ── Input helpers ──────────────────────────────────────────────────
+export interface HistoryEntry {
+  id: number;
+  timestamp: string;
+  inputs: WizardInputs;
+  result: CalculationResult;
+}
+
+// ── Styles ────────────────────────────────────────────────────────
 
 const fieldLabel: React.CSSProperties = {
   display: 'block', fontSize: 12, fontWeight: 700,
@@ -46,6 +57,8 @@ const inputBase: React.CSSProperties = {
 const hintStyle: React.CSSProperties = {
   fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4,
 };
+
+// ── Input helpers ─────────────────────────────────────────────────
 
 function Field({ label, hint, children, half }: {
   label: string; hint?: string; children: React.ReactNode; half?: boolean;
@@ -78,14 +91,72 @@ function NumInput({ value, onChange, min, max, step = 1 }: {
   );
 }
 
-function SelectField<T extends string>({ value, onChange, options }: {
-  value: T; onChange: (v: T) => void;
+// Combobox — select with typed search
+function Combobox<T extends string>({ value, onChange, options }: {
+  value: T;
+  onChange: (v: T) => void;
   options: Array<{ value: T; label: string }>;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  const current = options.find(o => o.value === value);
+  const filtered = query.trim()
+    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  useEffect(() => {
+    if (!open) setQuery('');
+  }, [open]);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   return (
-    <select value={value} onChange={e => onChange(e.target.value as T)} style={inputBase}>
-      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
+    <div ref={ref} style={{ position: 'relative' }}>
+      <input
+        type="text"
+        value={open ? query : (current?.label ?? '')}
+        placeholder="Type to search…"
+        onFocus={() => setOpen(true)}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        style={{ ...inputBase, cursor: 'pointer' }}
+      />
+      <div style={{
+        position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+        pointerEvents: 'none', color: 'var(--fg-subtle)', fontSize: 12,
+      }}>▼</div>
+      {open && filtered.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+          background: 'var(--bg-surface)', border: '1.5px solid var(--border-default)',
+          borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+          maxHeight: 240, overflowY: 'auto', marginTop: 4,
+        }}>
+          {filtered.map(o => (
+            <div key={o.value}
+              onMouseDown={() => { onChange(o.value); setOpen(false); }}
+              style={{
+                padding: '10px 14px', cursor: 'pointer', fontSize: 14,
+                background: o.value === value ? '#FFF3E9' : 'transparent',
+                color: o.value === value ? C.hivis : 'var(--fg-default)',
+                fontWeight: o.value === value ? 700 : 400,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#FFF3E9'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = o.value === value ? '#FFF3E9' : 'transparent'; }}
+            >
+              {o.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -171,7 +242,7 @@ function Divider({ label }: { label?: string }) {
   );
 }
 
-// ── Steps ─────────────────────────────────────────────────────────
+// ── Step components ───────────────────────────────────────────────
 
 function Step1({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardInputs>(k: K, v: WizardInputs[K]) => void }) {
   return (
@@ -245,7 +316,7 @@ function Step2({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
           <TextInput value={inp.roadName} onChange={v => set('roadName', v)} placeholder="e.g. Smith Street" />
         </Field>
         <Field label="Road Classification" half>
-          <SelectField<RoadClassification>
+          <Combobox<RoadClassification>
             value={inp.classification} onChange={v => set('classification', v)}
             options={[
               { value: 'freeway', label: 'Freeway / Motorway' },
@@ -287,9 +358,14 @@ function Step2({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
         </Field>
       </RowPair>
 
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 12 }}>
         <Toggle checked={inp.medianDivided} onChange={v => set('medianDivided', v)} label="Median / divided road (central median or barrier)" />
       </div>
+      {inp.medianDivided && (
+        <Field label="Median Width (m)" half hint="Physical width of median including any barrier — used for contraflow eligibility (≥6 m required for Contraflow Around)">
+          <NumInput value={inp.medianWidth} onChange={v => set('medianWidth', v)} min={0} step={0.5} />
+        </Field>
+      )}
 
       <Divider label="Geometry &amp; sight distance" />
       <Field label="Road Geometry">
@@ -315,37 +391,125 @@ function Step2({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
   );
 }
 
+// Category info cards
+const CATEGORY_INFO: Record<WorksCategory, { label: string; sub: string; icon: string; ref: string }> = {
+  static:  { label: 'Static Worksite', sub: 'Fixed location — Around, Through or Past', icon: '🚧', ref: 'AGTTM Part 3' },
+  mobile:  { label: 'Mobile Works', sub: 'Plant/workers moving along road', icon: '🚜', ref: 'AGTTM Part 4' },
+  stli:    { label: 'Short Term Low Impact', sub: 'In-lane or outside-lane, brief duration', icon: '⚡', ref: 'AGTTM Part 5' },
+};
+
 function Step3({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardInputs>(k: K, v: WizardInputs[K]) => void }) {
+  const [search, setSearch] = useState('');
+
+  const categorySteps = DESIGN_STEPS.filter(s => s.category === inp.worksCategory);
+  const filteredSteps = search.trim()
+    ? DESIGN_STEPS.filter(s =>
+        s.name.toLowerCase().includes(search.toLowerCase()) ||
+        s.subcategory.toLowerCase().includes(search.toLowerCase()) ||
+        s.description.toLowerCase().includes(search.toLowerCase())
+      )
+    : categorySteps;
+
+  const subcategories = [...new Set(filteredSteps.map(s => s.subcategory))];
+
   return (
     <>
       <h2 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 700 }}>Works Details</h2>
       <p style={{ margin: '0 0 28px', color: 'var(--fg-subtle)', fontSize: 14 }}>
-        Describe the scope of works and site hazards.
+        Select the AGTTM design step that best matches your worksite.
       </p>
 
-      <Field label="Type of Works">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-          {(Object.entries(WORKS_TYPE_LABELS) as Array<[WorksType, string]>).map(([v, label]) => {
-            const active = inp.worksType === v;
+      {/* Category selection */}
+      <Field label="Works Category">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+          {(Object.entries(CATEGORY_INFO) as Array<[WorksCategory, typeof CATEGORY_INFO[WorksCategory]]>).map(([cat, info]) => {
+            const active = inp.worksCategory === cat;
             return (
-              <button key={v} type="button" onClick={() => set('worksType', v)} style={{
-                padding: '10px 12px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+              <button key={cat} type="button" onClick={() => {
+                set('worksCategory', cat);
+                setSearch('');
+                // Auto-select first step in this category
+                const first = DESIGN_STEPS.find(s => s.category === cat);
+                if (first) set('worksType', first.type);
+              }} style={{
+                padding: '14px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
                 border: active ? `2px solid ${C.hivis}` : '1.5px solid var(--border-default)',
                 background: active ? '#FFF3E9' : 'var(--bg-surface)',
-                fontFamily: 'inherit', fontSize: 13, fontWeight: active ? 700 : 500,
-                color: active ? C.hivis : 'var(--fg-default)',
-              }}>{label}</button>
+                fontFamily: 'inherit',
+              }}>
+                <div style={{ fontSize: 22, marginBottom: 6 }}>{info.icon}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: active ? C.hivis : 'var(--fg-default)' }}>{info.label}</div>
+                <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 3 }}>{info.sub}</div>
+                <div style={{ fontSize: 10, color: C.hivis, marginTop: 4, fontWeight: 700 }}>{info.ref}</div>
+              </button>
             );
           })}
         </div>
       </Field>
 
+      {/* Design step search + selection */}
+      <Field label="Design Step">
+        <div style={{ marginBottom: 10 }}>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search all design steps…"
+            style={{ ...inputBase, paddingLeft: '38px' }}
+          />
+          <div style={{ position: 'relative', marginTop: -38, paddingLeft: 12, paddingTop: 11, pointerEvents: 'none', color: 'var(--fg-subtle)', fontSize: 16, width: 24 }}>🔍</div>
+        </div>
+
+        {subcategories.map(subcat => (
+          <div key={subcat} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg-subtle)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8, marginTop: 4 }}>
+              {subcat}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {filteredSteps.filter(s => s.subcategory === subcat).map(step => {
+                const active = inp.worksType === step.type;
+                return (
+                  <button key={step.type} type="button" onClick={() => {
+                    set('worksType', step.type as WorksType);
+                    set('worksCategory', step.category as WorksCategory);
+                  }} style={{
+                    padding: '12px 14px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                    border: active ? `2px solid ${C.hivis}` : '1.5px solid var(--border-default)',
+                    background: active ? '#FFF3E9' : 'var(--bg-surface)',
+                    fontFamily: 'inherit',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: active ? C.hivis : 'var(--fg-default)' }}>
+                        {step.name}
+                      </div>
+                      <div style={{ fontSize: 10, color: C.hivis, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>
+                        {step.agttmRef.split(',')[0]}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4, lineHeight: 1.4 }}>
+                      {step.description}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+
+        {filteredSteps.length === 0 && (
+          <div style={{ padding: '20px', textAlign: 'center', color: 'var(--fg-subtle)', fontSize: 14 }}>
+            No design steps match "{search}"
+          </div>
+        )}
+      </Field>
+
+      <Divider label="Works details" />
       <RowPair>
         <Field label="Works Length (m)" half hint="Total length of the work zone">
           <NumInput value={inp.worksLength} onChange={v => set('worksLength', v)} min={1} />
         </Field>
         <Field label="Duration" half>
-          <SelectField<'short_term' | 'day_works' | 'night_works' | 'multi_day'>
+          <Combobox<'short_term' | 'day_works' | 'night_works' | 'multi_day'>
             value={inp.duration} onChange={v => set('duration', v)}
             options={[
               { value: 'short_term', label: 'Short term (<1 hour)' },
@@ -364,7 +528,6 @@ function Step3({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
       </Field>
 
       <Divider label="Site hazards &amp; conditions" />
-
       <div style={{ marginBottom: 16 }}>
         <Toggle checked={inp.nightWorks} onChange={v => set('nightWorks', v)} label="Night works (between sunset and sunrise)" />
       </div>
@@ -376,7 +539,6 @@ function Step3({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
       </div>
 
       <Divider label="Workers &amp; plant" />
-
       <div style={{ marginBottom: 12 }}>
         <Toggle checked={inp.workersOnFoot} onChange={v => set('workersOnFoot', v)} label="Workers on foot within or adjacent to the work zone" />
       </div>
@@ -437,7 +599,6 @@ function Step4({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
       </RowPair>
 
       <Divider label="Weather conditions" />
-
       <Field label="Weather">
         <CardPicker<WeatherCondition>
           value={inp.weather} onChange={v => set('weather', v)} cols={4}
@@ -462,7 +623,6 @@ function Step4({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
       </Field>
 
       <Divider label="Surrounding environment" />
-
       <div style={{ marginBottom: 12 }}>
         <Toggle checked={inp.nearIntersection} onChange={v => set('nearIntersection', v)} label="Works are near an intersection" />
       </div>
@@ -475,7 +635,7 @@ function Step4({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
       <Divider label="Queue calculation" />
       <Field
         label="Maximum Stop Time (minutes)"
-        hint={`How long is one direction held before traffic is released? Set to 0 to auto-estimate from zone length (suggested: ${suggestStopTime(inp.worksLength)} min for a ${inp.worksLength} m zone). Applies to alternating control, full closures and portable signals.`}
+        hint={`How long is one direction held before traffic is released? Set to Auto to estimate from zone length (suggested: ${suggestStopTime(inp.worksLength)} min for a ${inp.worksLength} m zone). Applies to alternating control, full closures and portable signals.`}
       >
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {([0, 2, 5, 10, 15, 30] as const).map(t => {
@@ -524,7 +684,6 @@ function Step5({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
       )}
 
       <Divider label="Equipment" />
-
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <Toggle checked={inp.arrowBoard} onChange={v => set('arrowBoard', v)} label="Arrow board deployed at taper" />
         <Toggle checked={inp.vms} onChange={v => set('vms', v)} label="Variable Message Sign (VMS) in advance" />
@@ -545,26 +704,144 @@ function Step5({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
   );
 }
 
-// ── Main component ──────────────────────────────────────────────
+// ── History panel ─────────────────────────────────────────────────
+
+function HistoryPanel({ history, onLoad, onClose }: {
+  history: HistoryEntry[];
+  onLoad: (entry: HistoryEntry) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 200, display: 'flex',
+    }}>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{ flex: 1, background: 'rgba(0,0,0,0.4)' }} />
+      {/* Drawer */}
+      <div style={{
+        width: 380, background: 'var(--bg-surface)', boxShadow: '-4px 0 24px rgba(0,0,0,0.2)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      }}>
+        <div style={{
+          padding: '20px 24px', borderBottom: '1px solid var(--border-default)',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>Calculation History</div>
+            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 2 }}>{history.length} saved calculation{history.length !== 1 ? 's' : ''}</div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--fg-subtle)',
+            padding: '4px 8px',
+          }}>×</button>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+          {history.length === 0 && (
+            <div style={{ textAlign: 'center', color: 'var(--fg-subtle)', padding: '40px 0', fontSize: 14 }}>
+              No calculations saved yet. Complete the wizard and click Calculate to save.
+            </div>
+          )}
+          {[...history].reverse().map(entry => (
+            <div key={entry.id} style={{
+              border: '1px solid var(--border-default)', borderRadius: 10,
+              padding: '14px 16px', marginBottom: 12,
+              background: 'var(--bg-app)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{entry.inputs.projectName || 'Unnamed Project'}</div>
+                <div style={{ fontSize: 11, color: 'var(--fg-subtle)', flexShrink: 0, marginLeft: 8 }}>{entry.timestamp}</div>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginBottom: 4 }}>
+                {WORKS_TYPE_LABELS[entry.inputs.worksType]}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, background: '#FFF3E9', color: C.hivis, padding: '2px 8px', borderRadius: 20, fontWeight: 700 }}>
+                  {entry.result.recommendedTempSpeed} km/h
+                </span>
+                <span style={{ fontSize: 12, background: 'var(--paper-50)', color: 'var(--fg-default)', padding: '2px 8px', borderRadius: 20 }}>
+                  {entry.inputs.state} · {entry.inputs.postedSpeed} km/h posted
+                </span>
+                {entry.result.estimatedQueueLength && (
+                  <span style={{ fontSize: 12, background: 'var(--paper-50)', color: 'var(--fg-default)', padding: '2px 8px', borderRadius: 20 }}>
+                    Queue: {entry.result.estimatedQueueLength} m
+                  </span>
+                )}
+              </div>
+              <button onClick={() => { onLoad(entry); onClose(); }} style={{
+                width: '100%', padding: '8px', borderRadius: 6, border: 'none',
+                background: C.hivis, color: C.ink900, fontSize: 13, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>View Report →</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────
 
 export function CalculatorApp() {
   const [step, setStep] = useState(1);
+  const [maxStep, setMaxStep] = useState(1);
   const [inp, setInp] = useState<WizardInputs>(defaultInputs);
   const [result, setResult] = useState<CalculationResult | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const historyIdRef = useRef(0);
 
   const set = <K extends keyof WizardInputs>(k: K, v: WizardInputs[K]) =>
     setInp(prev => ({ ...prev, [k]: v }));
 
+  const handleCalculate = () => {
+    const r = calculate(inp);
+    setResult(r);
+    const entry: HistoryEntry = {
+      id: ++historyIdRef.current,
+      timestamp: new Date().toLocaleString('en-AU', { dateStyle: 'short', timeStyle: 'short' }),
+      inputs: { ...inp },
+      result: r,
+    };
+    setHistory(prev => [...prev, entry]);
+  };
+
   if (result) {
-    return <ReportView result={result} inputs={inp} onBack={() => setResult(null)} />;
+    return (
+      <>
+        <ReportView
+          result={result}
+          inputs={inp}
+          onBack={() => setResult(null)}
+          history={history}
+          onLoadHistory={(entry) => { setInp(entry.inputs); setResult(entry.result); }}
+        />
+        {showHistory && (
+          <HistoryPanel
+            history={history}
+            onLoad={(entry) => { setInp(entry.inputs); setResult(entry.result); }}
+            onClose={() => setShowHistory(false)}
+          />
+        )}
+      </>
+    );
   }
 
   const goNext = () => {
-    if (step < 5) setStep(s => s + 1);
-    else setResult(calculate(inp));
+    if (step < 5) {
+      const next = step + 1;
+      setStep(next);
+      setMaxStep(m => Math.max(m, next));
+    } else {
+      handleCalculate();
+    }
   };
-  const goBack = () => {
-    if (step > 1) setStep(s => s - 1);
+  const goBack = () => { if (step > 1) setStep(s => s - 1); };
+
+  const jumpTo = (n: number) => {
+    if (n <= maxStep) {
+      setStep(n);
+    }
   };
 
   const renderStep = () => {
@@ -582,21 +859,31 @@ export function CalculatorApp() {
       display: 'flex', flexDirection: 'column', height: '100%',
       background: 'var(--bg-app)', fontFamily: 'var(--font-ui)',
     }}>
-
-      {/* Step progress bar */}
+      {/* Header with step progress */}
       <div style={{
         background: 'var(--bg-surface)', borderBottom: '1px solid var(--border-default)',
         padding: '16px 32px', flexShrink: 0,
       }}>
-        <div style={{ maxWidth: 720, margin: '0 auto' }}>
-          <div style={{ display: 'flex', gap: 0 }}>
+        <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* Step pills */}
+          <div style={{ flex: 1, display: 'flex', gap: 0 }}>
             {STEP_LABELS.map((label, i) => {
               const n = i + 1;
               const done = n < step;
               const active = n === step;
+              const clickable = n <= maxStep;
               return (
                 <div key={n} style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => jumpTo(n)}
+                    disabled={!clickable}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+                      background: 'none', border: 'none', cursor: clickable ? 'pointer' : 'default',
+                      padding: '4px 2px', fontFamily: 'inherit',
+                    }}
+                  >
                     <div style={{
                       width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -604,23 +891,19 @@ export function CalculatorApp() {
                       color: done || active ? '#fff' : 'var(--fg-subtle)',
                       fontSize: 13, fontWeight: 700,
                       transition: 'background 0.2s',
+                      boxShadow: clickable && !active ? '0 0 0 2px transparent' : undefined,
+                      outline: clickable && !active ? '1px solid transparent' : undefined,
                     }}>
                       {done ? '✓' : n}
                     </div>
                     <span style={{
                       fontSize: 13, fontWeight: active ? 700 : 500,
                       color: active ? C.hivis : done ? 'var(--fg-default)' : 'var(--fg-subtle)',
-                      display: 'none',
-                      ['@media (min-width: 600px)' as string]: { display: 'inline' },
                     }}>{label}</span>
-                    <span style={{
-                      fontSize: 13, fontWeight: active ? 700 : 500,
-                      color: active ? C.hivis : done ? 'var(--fg-default)' : 'var(--fg-subtle)',
-                    }}>{label}</span>
-                  </div>
+                  </button>
                   {n < STEP_LABELS.length && (
                     <div style={{
-                      flex: 1, height: 2, margin: '0 8px',
+                      flex: 1, height: 2, margin: '0 4px',
                       background: done ? C.go : 'var(--border-default)',
                       transition: 'background 0.2s',
                     }}/>
@@ -629,6 +912,23 @@ export function CalculatorApp() {
               );
             })}
           </div>
+
+          {/* History button */}
+          <button onClick={() => setShowHistory(true)} style={{
+            padding: '8px 14px', borderRadius: 8, border: '1.5px solid var(--border-default)',
+            background: 'var(--bg-surface)', color: 'var(--fg-default)',
+            fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+          }}>
+            <span>📋</span>
+            History
+            {history.length > 0 && (
+              <span style={{
+                background: C.hivis, color: C.ink900, borderRadius: 10,
+                padding: '1px 6px', fontSize: 11, fontWeight: 700,
+              }}>{history.length}</span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -666,6 +966,15 @@ export function CalculatorApp() {
           </button>
         </div>
       </div>
+
+      {/* History panel overlay */}
+      {showHistory && (
+        <HistoryPanel
+          history={history}
+          onLoad={(entry) => { setInp(entry.inputs); setStep(5); }}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   );
 }
