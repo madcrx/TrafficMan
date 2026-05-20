@@ -57,6 +57,8 @@ export interface WizardInputs {
   date: string;
   preparedBy: string;
   location: string;
+  lat?: number;
+  lng?: number;
 
   // Step 2 – Road
   roadName: string;
