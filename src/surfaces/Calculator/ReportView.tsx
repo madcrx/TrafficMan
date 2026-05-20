@@ -26,6 +26,7 @@ interface Props {
   result: CalculationResult;
   inputs: WizardInputs;
   onBack: () => void;
+  onNew?: () => void;
   history?: HistoryEntry[];
   onLoadHistory?: (entry: HistoryEntry) => void;
 }
@@ -129,15 +130,31 @@ function controlMethodLabel(method: string, n: number): string {
 }
 
 function stateStdSummary(state: string): string {
-  const map: Record<string, string> = {
-    VIC: 'VIC CoP / AGTTM / AS 1742.3',
-    NSW: 'TCAWS v6.1 / AS 1742.3',
-    QLD: 'QGTTM / AS 1742.3',
-    WA:  'WA COP / AGTTM / AS 1742.3',
-    SA: 'AGTTM / AS 1742.3', TAS: 'AGTTM / AS 1742.3',
-    NT:  'AGTTM / AS 1742.3', ACT: 'AGTTM / AS 1742.3',
+  if (state === 'WA') return 'Main Roads WA COP';
+  if (state === 'QLD') return 'QGTTM (TMR)';
+  return 'AGTTM / AS 1742.3';
+}
+
+function distRef(ref: string, state: string): string {
+  const waMap: Record<string, string> = {
+    'AS 1742.3 Table 2.2': 'WA COP (Sign spacing)',
+    'AS 1742.3 Table 2.3': 'WA COP (Sight distance)',
+    'AGTTM Table 5.7': 'WA COP (Taper lengths)',
+    'AGTTM Table 5.8': 'WA COP (Taper separation)',
+    'AGTTM Table 4.2': 'WA COP (Cone spacing)',
+    'AGTTM Table 5.5': 'WA COP (Temp speed zone length)',
   };
-  return map[state] ?? 'AGTTM / AS 1742.3';
+  const qldMap: Record<string, string> = {
+    'AS 1742.3 Table 2.2': 'QGTTM (Sign spacing)',
+    'AS 1742.3 Table 2.3': 'QGTTM (Sight distance)',
+    'AGTTM Table 5.7': 'QGTTM (Taper lengths)',
+    'AGTTM Table 5.8': 'QGTTM (Taper separation)',
+    'AGTTM Table 4.2': 'QGTTM (Cone spacing)',
+    'AGTTM Table 5.5': 'QGTTM (Temp speed zone length)',
+  };
+  if (state === 'WA') return waMap[ref] ?? ref;
+  if (state === 'QLD') return qldMap[ref] ?? ref;
+  return ref;
 }
 
 // Criteria status badge
@@ -156,7 +173,7 @@ function CriteriaBadge({ status }: { status: 'pass' | 'fail' | 'check' }) {
   );
 }
 
-export function ReportView({ result: r, inputs: inp, onBack, history = [], onLoadHistory }: Props) {
+export function ReportView({ result: r, inputs: inp, onBack, onNew, history = [], onLoadHistory }: Props) {
   const handlePrint = () => {
     const existing = document.getElementById('tm-print-css');
     if (!existing) {
@@ -168,16 +185,17 @@ export function ReportView({ result: r, inputs: inp, onBack, history = [], onLoa
     window.print();
   };
 
+  const dr = (ref: string) => distRef(ref, inp.state);
   const distRows: (string | number)[][] = [
-    ['Approach sign spacing', `${r.approachSignSpacing} m`, 'AS 1742.3 Table 2.2'],
-    ['Sight distance to controller', `${r.sightDistanceM} m`, 'AS 1742.3 Table 2.3'],
-    ['Merge / approach taper', `${r.mergeTaperLength} m`, 'AGTTM Table 5.7'],
-    ['Lateral shift taper', `${r.lateralShiftTaper} m`, 'AGTTM Table 5.7'],
-    ['Buffer zone (minimum)', `${r.bufferZoneLength} m`, 'AGTTM Table 5.7'],
-    ['Distance between tapers', `${r.distBetweenTapers} m`, 'AGTTM Table 5.8'],
-    ['Cone spacing (through zone)', `${r.coneSpacingM} m`, 'AGTTM Table 4.2'],
-    ['Cone spacing (within taper)', `${r.coneSpacingTaperM} m`, 'AGTTM Table 4.2'],
-    ['Min. temp speed zone length', `${r.minTempZoneLength} m`, 'AGTTM Table 5.5'],
+    ['Approach sign spacing', `${r.approachSignSpacing} m`, dr('AS 1742.3 Table 2.2')],
+    ['Sight distance to controller', `${r.sightDistanceM} m`, dr('AS 1742.3 Table 2.3')],
+    ['Merge / approach taper', `${r.mergeTaperLength} m`, dr('AGTTM Table 5.7')],
+    ['Lateral shift taper', `${r.lateralShiftTaper} m`, dr('AGTTM Table 5.7')],
+    ['Buffer zone (minimum)', `${r.bufferZoneLength} m`, dr('AGTTM Table 5.7')],
+    ['Distance between tapers', `${r.distBetweenTapers} m`, dr('AGTTM Table 5.8')],
+    ['Cone spacing (through zone)', `${r.coneSpacingM} m`, dr('AGTTM Table 4.2')],
+    ['Cone spacing (within taper)', `${r.coneSpacingTaperM} m`, dr('AGTTM Table 4.2')],
+    ['Min. temp speed zone length', `${r.minTempZoneLength} m`, dr('AGTTM Table 5.5')],
   ];
 
   const approachRows = r.approachSigns.map(s => [
@@ -217,6 +235,14 @@ export function ReportView({ result: r, inputs: inp, onBack, history = [], onLoa
           background: 'var(--bg-surface)', color: 'var(--fg-default)',
           fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
         }}>← Edit Inputs</button>
+
+        {onNew && (
+          <button onClick={onNew} style={{
+            padding: '9px 20px', borderRadius: 8, border: '1.5px solid var(--border-default)',
+            background: 'var(--bg-surface)', color: 'var(--fg-default)',
+            fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+          }}>+ New Calculation</button>
+        )}
 
         {history.length > 0 && onLoadHistory && (
           <select

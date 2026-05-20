@@ -5,7 +5,7 @@ import {
   signSpacing, sightDistance, taperLengths, scaleTaper, distBetweenTapers,
   coneSpacing, CONE_TAPER_SPACING, recommendedTempSpeed, minTempZoneLength,
   speedReductionSteps, estimatedQueueLength, suggestStopTime, bufferZoneMin,
-  stateStandards, signName, getDesignStep, evaluateCriteria,
+  stateStandards, signName, docRef, getDesignStep, evaluateCriteria,
 } from './standards';
 
 export function calculate(inp: WizardInputs): CalculationResult {
@@ -383,12 +383,9 @@ export function calculate(inp: WizardInputs): CalculationResult {
   const refs = stateStandards(state);
   const references = [
     ...refs.primary.map(r => `[Primary] ${r}`),
-    ...refs.secondary.map(r => `[Supplementary] ${r}`),
+    ...refs.secondary.map(r => `[Note] ${r}`),
     `[Design Step] ${designStepRef}`,
-    'AS 1742.3:2019 — Table 2.2 (Sign spacing)',
-    'AS 1742.3:2019 — Table 2.3 (Sight distances)',
-    'AGTTM03-21 — Table 5.7 (Taper lengths)',
-    'AGTTM03-21 — Table 5.5 (Temporary speed zones)',
+    ...refs.calculationTableRefs,
   ];
 
   const warnings: string[] = [];
@@ -408,7 +405,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
   }
 
   if (inp.excavations && inp.excavationDepth > 250 && inp.excavationProximity < 5) {
-    warnings.push(`Excavation depth ${inp.excavationDepth} mm within ${inp.excavationProximity} m of traffic — road safety barrier required per AGTTM03 Section 3.6.`);
+    warnings.push(`Excavation depth ${inp.excavationDepth} mm within ${inp.excavationProximity} m of traffic — road safety barrier required per ${docRef('AGTTM Part 3, Section 3.6', state)}.`);
   }
 
   if (inp.geometry === 'crest' || inp.sightIssue) {

@@ -214,34 +214,60 @@ export function maxShuttleFlowLength(vph: number): number {
 export function stateStandards(state: AustralianState): {
   primary: string[];
   secondary: string[];
+  calculationTableRefs: string[];
 } {
-  switch (state) {
-    case 'NSW':
-      return {
-        primary: ['TCAWS v6.1 (TfNSW)', 'AS 1742.3:2019'],
-        secondary: ['RMS Guidelines for Temporary Traffic Management'],
-      };
-    case 'QLD':
-      return {
-        primary: ['QGTTM (TMR Queensland)', 'AS 1742.3:2019'],
-        secondary: ['AGTTM (Austroads) — as supplementary reference'],
-      };
-    case 'WA':
-      return {
-        primary: ['Traffic Management for Works on Roads COP (Main Roads WA)', 'AS 1742.3:2019'],
-        secondary: ['AGTTM (Austroads)', 'Main Roads WA Specification 601'],
-      };
-    case 'VIC':
-      return {
-        primary: ['Code of Practice for Worksite Safety — Traffic Management (Transport for Victoria / VicRoads)', 'AGTTM (Austroads)', 'AS 1742.3:2019'],
-        secondary: ['Confirm current edition with Department of Transport and Planning (DTP) Victoria'],
-      };
-    default:
-      return {
-        primary: ['AGTTM (Austroads)', 'AS 1742.3:2019'],
-        secondary: ['State/Territory Road Authority requirements may apply'],
-      };
+  if (state === 'WA') {
+    return {
+      primary: [
+        'Main Roads WA — Traffic Management for Works on Roads Code of Practice (current edition)',
+        'Main Roads WA — Specification 601 (Traffic Management)',
+      ],
+      secondary: [
+        'Note: For events on roads, refer to the separate Main Roads WA — Traffic Management for Events on Roads Code of Practice',
+      ],
+      calculationTableRefs: [
+        'WA COP (Sign spacing)',
+        'WA COP (Sight distances)',
+        'WA COP (Taper lengths)',
+        'WA COP (Temporary speed zones)',
+      ],
+    };
   }
+  if (state === 'QLD') {
+    return {
+      primary: [
+        'QGTTM — Queensland Guide to Traffic Management for Works on Roads (TMR, current edition)',
+      ],
+      secondary: [],
+      calculationTableRefs: [
+        'QGTTM (Sign spacing)',
+        'QGTTM (Sight distances)',
+        'QGTTM (Taper lengths)',
+        'QGTTM (Temporary speed zones)',
+      ],
+    };
+  }
+  // All other states and territories use AGTTM + AS 1742.3
+  return {
+    primary: [
+      'AGTTM — Austroads Guide to Temporary Traffic Management (current edition)',
+      'AS 1742.3:2019 — Manual of Uniform Traffic Control Devices, Part 3: Traffic Control for Works on Roads',
+    ],
+    secondary: [],
+    calculationTableRefs: [
+      'AS 1742.3:2019 — Table 2.2 (Sign spacing)',
+      'AS 1742.3:2019 — Table 2.3 (Sight distances)',
+      'AGTTM03-21 — Table 5.7 (Taper lengths)',
+      'AGTTM03-21 — Table 5.5 (Temporary speed zones)',
+    ],
+  };
+}
+
+// ─── Translate AGTTM/AS 1742.3 refs to state-equivalent doc names ─
+export function docRef(ref: string, state: AustralianState): string {
+  if (state === 'WA') return ref.replace(/AGTTM\S*/g, 'WA COP').replace('AS 1742.3', 'WA COP');
+  if (state === 'QLD') return ref.replace(/AGTTM\S*/g, 'QGTTM').replace('AS 1742.3', 'QGTTM');
+  return ref;
 }
 
 // ─── Sign descriptions by state ────────────────────────────────
