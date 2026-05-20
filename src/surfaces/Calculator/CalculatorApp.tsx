@@ -22,7 +22,7 @@ const HISTORY_MAX = 50;
 const defaultInputs: WizardInputs = {
   userRole: 'planner', state: 'VIC',
   projectName: '', projectRef: '', date: new Date().toISOString().split('T')[0],
-  preparedBy: '', location: '',
+  preparedBy: '', location: '', lat: undefined, lng: undefined,
   roadName: '', classification: 'arterial', postedSpeed: 60,
   lanesInDirection: 1, laneWidth: 3.5, medianDivided: false, medianWidth: 0,
   geometry: 'straight', curveRadius: 0, sightIssue: false,
@@ -351,6 +351,55 @@ function Divider({ label }: { label?: string }) {
 type SetFn = <K extends keyof WizardInputs>(k: K, v: WizardInputs[K]) => void;
 
 const Step1 = memo(function Step1({ inp, set }: { inp: WizardInputs; set: SetFn }) {
+  const [geoStatus, setGeoStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
+  const [geoDisplay, setGeoDisplay] = useState<string | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const q = inp.location.trim();
+    if (q.length < 3) {
+      setGeoStatus('idle');
+      setGeoDisplay(null);
+      setGeoError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setGeoStatus('loading');
+    const timer = setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=au`;
+        const resp = await fetch(url, {
+          signal: controller.signal,
+          headers: { 'Accept': 'application/json' },
+        });
+        const data = await resp.json() as Array<{ lat: string; lon: string; display_name: string }>;
+        if (data.length > 0) {
+          const lat = parseFloat(data[0].lat);
+          const lng = parseFloat(data[0].lon);
+          set('lat', lat);
+          set('lng', lng);
+          setGeoDisplay(data[0].display_name);
+          setGeoStatus('ok');
+          setGeoError(null);
+        } else {
+          set('lat', undefined);
+          set('lng', undefined);
+          setGeoStatus('error');
+          setGeoError('Location not found — try a more specific address or suburb');
+        }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return;
+        setGeoStatus('error');
+        setGeoError('Could not reach geocoding service — check network connection');
+      }
+    }, 700);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [inp.location, set]);
+
+  const mapUrl = inp.lat != null && inp.lng != null
+    ? `https://www.openstreetmap.org/export/embed.html?bbox=${inp.lng - 0.012},${inp.lat - 0.008},${inp.lng + 0.012},${inp.lat + 0.008}&layer=mapnik&marker=${inp.lat},${inp.lng}`
+    : null;
+
   return (
     <>
       <h2 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 700 }}>Project &amp; Role</h2>
@@ -404,9 +453,65 @@ const Step1 = memo(function Step1({ inp, set }: { inp: WizardInputs; set: SetFn 
           <TextInput value={inp.preparedBy} onChange={v => set('preparedBy', v)} placeholder="Full name" />
         </Field>
       </RowPair>
-      <Field label="Location / Address">
-        <TextInput value={inp.location} onChange={v => set('location', v)} placeholder="Street address or locality" />
+
+      <Field label="Location / Address" hint="Australian address or suburb — geocoded automatically">
+        <div style={{ position: 'relative' }}>
+          <TextInput value={inp.location} onChange={v => set('location', v)} placeholder="e.g. 123 Smith Street, Melbourne VIC" />
+          {geoStatus === 'loading' && (
+            <div aria-hidden="true" style={{
+              position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+              fontSize: 12, color: 'var(--fg-subtle)',
+            }}>⏳</div>
+          )}
+          {geoStatus === 'ok' && (
+            <div aria-hidden="true" style={{
+              position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+              fontSize: 14, color: '#28A745',
+            }}>✓</div>
+          )}
+        </div>
       </Field>
+
+      {geoStatus === 'error' && geoError && (
+        <div role="alert" style={{
+          marginTop: -12, marginBottom: 16, padding: '6px 12px', borderRadius: 6,
+          background: '#FFF5F5', border: '1px solid #F5C6CB',
+          fontSize: 12, color: '#721C24',
+        }}>{geoError}</div>
+      )}
+
+      {geoStatus === 'ok' && inp.lat != null && inp.lng != null && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8, flexWrap: 'wrap',
+          }}>
+            <span style={{ fontSize: 12, color: 'var(--fg-subtle)', flex: 1, lineHeight: 1.4 }}>
+              {geoDisplay}
+            </span>
+            <span style={{
+              fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700,
+              color: C.hivis, flexShrink: 0,
+              background: '#FFF3E9', padding: '3px 10px', borderRadius: 6,
+            }}>
+              {inp.lat.toFixed(5)}°, {inp.lng.toFixed(5)}°
+            </span>
+          </div>
+          <iframe
+            src={mapUrl!}
+            title="Location map preview"
+            width="100%"
+            height="220"
+            loading="lazy"
+            style={{
+              border: '1.5px solid var(--border-default)', borderRadius: 10,
+              display: 'block',
+            }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 5 }}>
+            Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>OpenStreetMap</a> contributors
+          </div>
+        </div>
+      )}
     </>
   );
 });

@@ -268,6 +268,20 @@ export function ReportView({ result: r, inputs: inp, onBack, history = [], onLoa
               {inp.location && <span style={{ marginRight: 16 }}>{inp.location}</span>}
               {inp.date && <span>{inp.date}</span>}
             </div>
+            {inp.lat != null && inp.lng != null && (
+              <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>Coordinates:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: C.hivis }}>
+                  {inp.lat.toFixed(5)}°, {inp.lng.toFixed(5)}°
+                </span>
+                <a
+                  href={`https://www.openstreetmap.org/?mlat=${inp.lat}&mlon=${inp.lng}&zoom=16`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 11, color: C.info }}
+                >View on map ↗</a>
+              </div>
+            )}
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
             <div style={{
