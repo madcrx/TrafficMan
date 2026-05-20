@@ -5,18 +5,29 @@ import {
   signSpacing, sightDistance, taperLengths, scaleTaper, distBetweenTapers,
   coneSpacing, CONE_TAPER_SPACING, recommendedTempSpeed, minTempZoneLength,
   speedReductionSteps, estimatedQueueLength, suggestStopTime, bufferZoneMin,
-  stateStandards, signName,
+  stateStandards, signName, getDesignStep, evaluateCriteria,
 } from './standards';
 
 export function calculate(inp: WizardInputs): CalculationResult {
   const state = inp.state;
   const posted = inp.postedSpeed;
+
+  // ── Resolve design step ─────────────────────────────────────────
+  const stepDef = getDesignStep(inp.worksType);
+  const designStepName = stepDef?.name ?? inp.worksType;
+  const designStepRef = stepDef?.agttmRef ?? 'AGTTM';
+  const designStepDescription = stepDef?.description ?? '';
+  const criteriaChecks = stepDef ? evaluateCriteria(stepDef, inp) : [];
+  const mandatoryRequirements = stepDef?.mandatory ?? [];
+  const noSignSchedule = stepDef?.noSignSchedule ?? false;
+
+  // ── Behaviour flags from design step def ───────────────────────
+  const isAlternating = stepDef?.isAlternating ?? false;
+  const isFullClosure = stepDef?.isFullClosure ?? false;
+  const isLaneClosure = stepDef?.isLaneClosure ?? false;
+  const isShoulderOnly = stepDef?.isShoulderOnly ?? false;
   const isMultilane = inp.lanesInDirection > 1;
   const hasTCPD = ['stop_slow_bats', 'portable_signals', 'police'].includes(inp.controlMethod);
-  const isAlternating = inp.worksType === 'lane_closure_2lane';
-  const isLaneClosure = inp.worksType.startsWith('lane_closure') || inp.worksType === 'pavement_resurfacing';
-  const isFullClosure = inp.worksType === 'full_road_closure';
-  const isShoulderOnly = inp.worksType === 'shoulder_only';
 
   // ── 1. Recommended temp speed ──────────────────────────────────
   const workerProx = inp.workersOnFoot ? inp.workerProximity : null;
@@ -28,7 +39,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
 
   const temp = tempRec.speed;
 
-  // For QLD: mandatory 60 km/h zone when PTCD in use and approach >60
+  // QLD mandatory 60 km/h when PTCD deployed on roads >60 km/h
   let qldNote = '';
   if (state === 'QLD' && hasTCPD && posted > 60 && temp > 60) {
     qldNote = 'QLD: QGTTM requires a mandatory 60 km/h temp speed zone when traffic controllers are deployed on roads >60 km/h.';
@@ -38,34 +49,29 @@ export function calculate(inp: WizardInputs): CalculationResult {
   const reductionSteps: SpeedStep[] = speedReductionSteps(posted, temp);
 
   // ── 3. Sign spacing & sight distance ───────────────────────────
-  // Sign spacing uses APPROACH speed (first speed the driver encounters)
   const approachSpacing = signSpacing(posted, state);
   const sightDist       = sightDistance(temp, state);
   const minTempLen      = minTempZoneLength(temp);
 
   // ── 4. Taper lengths ────────────────────────────────────────────
-  // Use TEMP speed for taper calculations (taper is within temp zone)
+  const laneW = Math.max(inp.laneWidth, 2.5); // guard against 0/invalid entry
   const tapers = taperLengths(temp);
-  const scaledMerge    = scaleTaper(tapers.merge, inp.laneWidth);
-  const scaledLatShift = scaleTaper(tapers.lateralShift, inp.laneWidth);
+  const scaledMerge    = scaleTaper(tapers.merge, laneW);
+  const scaledLatShift = scaleTaper(tapers.lateralShift, laneW);
 
-  // For shoulder only: no merge taper, use lateral shift
   const primaryTaper = isShoulderOnly
     ? scaledLatShift
     : (isLaneClosure || isAlternating || isFullClosure ? scaledMerge : scaledLatShift);
 
   // ── 5. Buffer zone ──────────────────────────────────────────────
-  const bufferMin = bufferZoneMin(temp, isMultilane);
-  // Increase buffer if reduced sight, crest or curve
+  const bufferMin    = bufferZoneMin(temp, isMultilane);
   const bufferLength = inp.sightIssue ? Math.max(bufferMin, 50) : bufferMin;
 
   // ── 6. Cone spacing ─────────────────────────────────────────────
-  const coneThru  = coneSpacing(temp);
+  const coneThru   = coneSpacing(temp);
   const distTapers = distBetweenTapers(temp);
 
   // ── 7. Queue length estimate ────────────────────────────────────
-  // Queue applies when one direction is fully stopped: alternating control,
-  // full road closure with pilot vehicle or signals, portable signals on single lane.
   const queueScenario =
     isAlternating ||
     isFullClosure ||
@@ -75,225 +81,208 @@ export function calculate(inp: WizardInputs): CalculationResult {
   let queueStopTime: number | null = null;
 
   if (queueScenario && inp.peakHourVolume > 0) {
-    // Stop time: use user value if provided, otherwise auto-suggest from zone length
     queueStopTime = (inp.maxStopTime > 0)
       ? inp.maxStopTime
       : suggestStopTime(inp.worksLength);
-
-    // peakHourVolume is entered as BOTH directions combined; for queue we need
-    // the one-direction volume (the direction being held).
-    // Divide by 2 assumes balanced directional split — user can adjust if needed.
     const vphOneDir = inp.peakHourVolume / 2;
-
-    queueLength = estimatedQueueLength(
-      vphOneDir,
-      queueStopTime,
-      inp.heavyVehiclePercent,
-    );
+    queueLength = estimatedQueueLength(vphOneDir, queueStopTime, inp.heavyVehiclePercent);
   }
   const needsRepeaterSign = queueLength !== null && queueLength > 240;
 
-  // ── 8. Build sign schedule ──────────────────────────────────────
-  // Positions are measured from TAPER START (negative = upstream, positive = downstream)
-  // Note: actual measured position from taper start:
-  //   taper_start = 0
-  //   taper_end   = +primaryTaper
-  //   buffer_end  = +primaryTaper + bufferLength  (= work area start)
-
+  // ── 8. Sign schedule (only for static/full-zone types) ─────────
   const approachSigns: SignItem[] = [];
   const departureSigns: SignItem[] = [];
-  let seq = 1;
 
-  // ── Approach end signs ──────────────────────────────────────────
-  // Start from PTCD (if control) or taper start, working backward
+  if (!noSignSchedule) {
+    let seq = 1;
+    let curPos = 0;
 
-  let curPos = 0; // reference = taper start
-
-  if (hasTCPD && (isAlternating || isFullClosure)) {
-    // STOP/SLOW bat or signals at taper start (or just before)
-    approachSigns.push({
-      sequence: seq++,
-      code: inp.controlMethod === 'stop_slow_bats' ? 'TC' : 'PTL',
-      description: inp.controlMethod === 'stop_slow_bats'
-        ? `Traffic controller position — STOP/SLOW bat (${inp.numberOfControllers > 0 ? inp.numberOfControllers : 1} operator${inp.numberOfControllers > 1 ? 's' : ''})`
-        : inp.controlMethod === 'portable_signals'
-        ? 'Portable traffic light (STOP signal) — approach head'
-        : 'Police control point',
-      distanceFromTaperStart: 0,
-      notes: 'Position at start of taper; maintain 2 m minimum clearance from traffic',
-    });
-
-    // PREPARE TO STOP at sight distance upstream of PTCD
-    curPos = -sightDist;
-    approachSigns.push({
-      sequence: seq++,
-      code: 'TM1-18B',
-      description: signName('PREPARE TO STOP', state),
-      distanceFromTaperStart: curPos,
-      notes: `Placed ${sightDist} m upstream of traffic controller (sight distance Table 2.3 — ${temp} km/h)`,
-    });
-
-    // If queue > 240 m add repeater
-    if (needsRepeaterSign) {
+    if (hasTCPD && (isAlternating || isFullClosure)) {
       approachSigns.push({
         sequence: seq++,
-        code: 'TM1-18B-R',
-        description: 'PREPARE TO STOP (repeater)',
-        distanceFromTaperStart: curPos - 120,
-        notes: `Queue estimated at ${queueLength} m — repeater required per Table 4.4(a); place 120 m upstream of first PREPARE TO STOP`,
+        code: inp.controlMethod === 'stop_slow_bats' ? 'TC' : 'PTL',
+        description: inp.controlMethod === 'stop_slow_bats'
+          ? `Traffic controller position — STOP/SLOW bat (${Math.max(inp.numberOfControllers, 1)} operator${inp.numberOfControllers > 1 ? 's' : ''})`
+          : inp.controlMethod === 'portable_signals'
+          ? 'Portable traffic light (STOP signal) — approach head'
+          : 'Police control point',
+        distanceFromTaperStart: 0,
+        notes: 'Position at start of taper; maintain 2 m minimum clearance from traffic',
       });
-      curPos -= 120;
+
+      curPos = -sightDist;
+      approachSigns.push({
+        sequence: seq++,
+        code: 'TM1-18B',
+        description: signName('PREPARE TO STOP', state),
+        distanceFromTaperStart: curPos,
+        notes: `Placed ${sightDist} m upstream of traffic controller (sight distance Table 2.3 — ${temp} km/h)`,
+      });
+
+      if (needsRepeaterSign) {
+        approachSigns.push({
+          sequence: seq++,
+          code: 'TM1-18B-R',
+          description: 'PREPARE TO STOP (repeater)',
+          distanceFromTaperStart: curPos - 120,
+          notes: `Queue estimated at ${queueLength} m — repeater required per Table 4.4(a); place 120 m upstream of first PREPARE TO STOP`,
+        });
+        curPos -= 120;
+      }
+
+      curPos -= approachSpacing;
+      approachSigns.push({
+        sequence: seq++,
+        code: 'W5-2',
+        description: signName('TRAFFIC CONTROLLERS AHEAD', state),
+        distanceFromTaperStart: curPos,
+        notes: `Spaced ${approachSpacing} m from PREPARE TO STOP sign`,
+      });
     }
 
-    // TRAFFIC CONTROLLERS AHEAD / TRAFFIC CONTROL AHEAD
-    curPos -= approachSpacing;
-    approachSigns.push({
-      sequence: seq++,
-      code: 'W5-2',
-      description: signName('TRAFFIC CONTROLLERS AHEAD', state),
-      distanceFromTaperStart: curPos,
-      notes: `Spaced ${approachSpacing} m from PREPARE TO STOP sign`,
-    });
-  }
-
-  // ── Speed reduction signs ───────────────────────────────────────
-  if (reductionSteps.length > 0) {
-    // Last step (immediately before work zone) closest to worksite
-    // First step furthest away
-    [...reductionSteps].reverse().forEach((step, idx) => {
-      curPos -= approachSpacing;
-      // "AHEAD" sign for first step if reduction > 20
-      if (idx === 0 && reductionSteps.length > 1) {
+    if (reductionSteps.length > 0) {
+      [...reductionSteps].reverse().forEach((step, idx) => {
+        curPos -= approachSpacing;
         approachSigns.push({
           sequence: seq++,
           code: `R4-1(${step.to})`,
-          description: `SPEED ${step.to} — temporary speed limit sign`,
+          description: idx === 0 && reductionSteps.length > 1
+            ? `SPEED ${step.to} — temporary speed limit sign`
+            : `SPEED ${step.to} — temporary speed limit`,
           distanceFromTaperStart: curPos,
-          notes: `Speed reduced from ${step.from} to ${step.to} km/h (Table 5.6 — ${step.method})`,
+          notes: `Speed reduced from ${step.from} to ${step.to} km/h (${step.method})`,
         });
-      } else {
+      });
+
+      if (reductionSteps.length > 0) {
+        const firstStep = reductionSteps[0];
+        curPos -= approachSpacing;
         approachSigns.push({
           sequence: seq++,
-          code: `R4-1(${step.to})`,
-          description: `SPEED ${step.to} — temporary speed limit`,
+          code: 'W5-1',
+          description: `SPEED LIMIT AHEAD — advance warning: ${firstStep.to} km/h zone`,
           distanceFromTaperStart: curPos,
-          notes: `Speed reduced from ${step.from} to ${step.to} km/h`,
+          notes: `Placed ${approachSpacing} m before first speed limit sign. W5-1 per AS 1742.3 — warning of upcoming speed reduction to ${firstStep.to} km/h`,
         });
       }
-    });
+    }
 
-    // SPEED LIMIT AHEAD (for the outermost reduction)
-    if (reductionSteps.length > 0) {
-      const firstStep = reductionSteps[0];
+    // W6-4 (LANE CLOSED AHEAD) applies only to multilane lane reductions.
+    // W6-5 (ROAD CLOSED AHEAD) applies to full closures.
+    // Alternating flow: PREPARE TO STOP + controller sequence already handles guidance — no closure sign.
+    if (!isShoulderOnly && !isAlternating) {
       curPos -= approachSpacing;
+      const laneClosed = isFullClosure ? 'ROAD CLOSED AHEAD' : 'MERGE (arrow towards open lane)';
+      const closedCode = isFullClosure ? 'W6-5' : 'W6-4';
       approachSigns.push({
         sequence: seq++,
-        code: `R4-1(${firstStep.to})-AHEAD`,
-        description: `SPEED ${firstStep.to} AHEAD — advance warning of speed change`,
+        code: closedCode,
+        description: laneClosed,
         distanceFromTaperStart: curPos,
-        notes: `Placed ${approachSpacing} m before speed change sign`,
+        notes: isFullClosure ? 'Road is closed ahead — direct drivers to detour' : 'Direct drivers to merge into the open lane',
       });
     }
-  }
 
-  // ── ROAD NARROWS / LANE CLOSED AHEAD / MERGE ────────────────────
-  if (!isShoulderOnly) {
-    curPos -= approachSpacing;
-    const laneClosed = isAlternating
-      ? 'LANE CLOSED AHEAD'
-      : isFullClosure
-      ? 'ROAD CLOSED AHEAD'
-      : 'MERGE (arrow towards open lane)';
+    curPos -= approachSpacing * 2;
     approachSigns.push({
       sequence: seq++,
-      code: 'W6-4',
-      description: laneClosed,
+      code: 'W6-1',
+      description: signName('WORKS AHEAD', state),
       distanceFromTaperStart: curPos,
-      notes: 'Direct drivers to merge into the open lane',
+      notes: `First sign the driver encounters — placed at double sign spacing (${approachSpacing * 2} m) from next sign`,
     });
-  }
 
-  // ── WORKS AHEAD — at 2× sign spacing from the previous sign ────
-  curPos -= approachSpacing * 2; // double spacing for first sign driver sees
-  approachSigns.push({
-    sequence: seq++,
-    code: 'W6-1',
-    description: signName('WORKS AHEAD', state),
-    distanceFromTaperStart: curPos,
-    notes: `First sign the driver encounters — placed at double sign spacing (${approachSpacing * 2} m) from next sign`,
-  });
+    if (inp.arrowBoard || (isLaneClosure && temp >= 60)) {
+      approachSigns.push({
+        sequence: seq++,
+        code: 'AB',
+        description: 'Arrow board — flashing directional arrow',
+        distanceFromTaperStart: 0,
+        notes: 'Position at start of taper, pointing toward open lane; face toward approaching traffic',
+      });
+    }
 
-  // ── Arrow board (at taper start, downstream) ────────────────────
-  if (inp.arrowBoard || (isLaneClosure && temp >= 60)) {
-    approachSigns.push({
-      sequence: seq++,
-      code: 'AB',
-      description: 'Arrow board — flashing directional arrow',
-      distanceFromTaperStart: 0,
-      notes: 'Position at start of taper, pointing toward open lane; face toward approaching traffic',
-    });
-  }
+    approachSigns.sort((a, b) => a.distanceFromTaperStart - b.distanceFromTaperStart);
+    approachSigns.forEach((s, i) => { s.sequence = i + 1; });
 
-  // ── Sort approach signs by position (furthest first = most negative) ───
-  approachSigns.sort((a, b) => a.distanceFromTaperStart - b.distanceFromTaperStart);
-  approachSigns.forEach((s, i) => { s.sequence = i + 1; });
+    // Departure signs
+    seq = 1;
+    let depPos = primaryTaper + bufferLength + inp.worksLength;
 
-  // ── Departure end signs ─────────────────────────────────────────
-  seq = 1;
-  let depPos = primaryTaper + bufferLength + inp.worksLength; // after work area
+    if (hasTCPD && (isAlternating || isFullClosure)) {
+      departureSigns.push({
+        sequence: seq++,
+        code: inp.controlMethod === 'stop_slow_bats' ? 'TC' : 'PTL',
+        description: inp.controlMethod === 'stop_slow_bats'
+          ? 'Traffic controller position — SLOW/GO bat (departure end)'
+          : 'Portable traffic light — departure head',
+        distanceFromTaperStart: primaryTaper + bufferLength,
+        notes: 'Controls traffic exiting work zone; departs when safe to go',
+      });
+      depPos = primaryTaper + bufferLength + inp.worksLength + distTapers;
+    }
 
-  if (hasTCPD && (isAlternating || isFullClosure)) {
     departureSigns.push({
       sequence: seq++,
-      code: inp.controlMethod === 'stop_slow_bats' ? 'TC' : 'PTL',
-      description: inp.controlMethod === 'stop_slow_bats'
-        ? 'Traffic controller position — SLOW/GO bat (departure end)'
-        : 'Portable traffic light — departure head',
-      distanceFromTaperStart: primaryTaper + bufferLength,
-      notes: 'Controls traffic exiting work zone; departs when safe to go',
+      code: 'RW6-2',
+      description: 'END ROADWORKS',
+      distanceFromTaperStart: depPos,
+      notes: 'Signals end of works; placed after departure taper',
     });
-    depPos = primaryTaper + bufferLength + inp.worksLength + distTapers;
-  }
 
-  // END ROADWORKS / END SPEED ZONE
-  departureSigns.push({
-    sequence: seq++,
-    code: 'RW6-2',
-    description: 'END ROADWORKS',
-    distanceFromTaperStart: depPos,
-    notes: 'Signals end of works; placed after departure taper',
-  });
-
-  if (reductionSteps.length > 0) {
-    departureSigns.push({
-      sequence: seq++,
-      code: `R4-1(${posted})`,
-      description: `SPEED ${posted} — end of temporary speed restriction`,
-      distanceFromTaperStart: depPos + approachSpacing,
-      notes: 'Restore posted speed limit at end of works',
-    });
+    if (reductionSteps.length > 0) {
+      departureSigns.push({
+        sequence: seq++,
+        code: `R4-1(${posted})`,
+        description: `SPEED ${posted} — end of temporary speed restriction`,
+        distanceFromTaperStart: depPos + approachSpacing,
+        notes: 'Restore posted speed limit at end of works',
+      });
+    }
   }
 
   // ── 9. Equipment list ───────────────────────────────────────────
   const equipment: EquipmentItem[] = [];
 
-  // Cones: taper + buffer (each side)
-  const taperConeCount = Math.ceil(primaryTaper / CONE_TAPER_SPACING) + 1;
-  const bufferConeCount = Math.ceil(bufferLength / coneThru) + 1;
-  const totalCones = (taperConeCount + bufferConeCount) * (isAlternating ? 2 : 1);
-  equipment.push({
-    item: 'Traffic cones / bollards',
-    quantity: `${totalCones} minimum`,
-    specification: `Min 700 mm height for temp speed ≥60 km/h; 500 mm for <60 km/h. Taper spacing: ${CONE_TAPER_SPACING} m. Buffer spacing: ${coneThru} m`,
-  });
+  if (!noSignSchedule) {
+    const taperConeCount  = Math.ceil(primaryTaper / CONE_TAPER_SPACING) + 1;
+    const bufferConeCount = Math.ceil(bufferLength / coneThru) + 1;
+    const totalCones = (taperConeCount + bufferConeCount) * (isAlternating ? 2 : 1);
+    equipment.push({
+      item: 'Traffic cones / bollards',
+      quantity: `${totalCones} minimum`,
+      specification: `Min 700 mm height for temp speed ≥60 km/h; 500 mm for <60 km/h. Taper spacing: ${CONE_TAPER_SPACING} m. Buffer spacing: ${coneThru} m`,
+    });
 
-  // Signs
-  const signCount = approachSigns.length + departureSigns.length;
-  equipment.push({
-    item: 'Advance warning / regulatory signs',
-    quantity: `${signCount} boards`,
-    specification: 'Min 900 × 900 mm for freeways/highways; 750 × 750 mm for other roads. Retro-reflective sheeting (Class 1 minimum)',
-  });
+    const signCount = approachSigns.length + departureSigns.length;
+    equipment.push({
+      item: 'Advance warning / regulatory signs',
+      quantity: `${signCount} boards`,
+      specification: 'Min 900 × 900 mm for freeways/highways; 750 × 750 mm for other roads. Retro-reflective sheeting (Class 1 minimum)',
+    });
+  }
+
+  if (noSignSchedule) {
+    // Minimal equipment for STLI/mobile
+    equipment.push({
+      item: 'Shadow vehicle',
+      quantity: '1 minimum',
+      specification: 'Arrow board on rear; SLOW MOVING PLANT / ROAD WORKS sign; amber beacon; two-way radio',
+    });
+    if (['mobile_class2', 'mobile_class3', 'stli_freq_lane', 'stli_specialist'].includes(inp.worksType) ||
+        ['freeway', 'highway'].includes(inp.classification)) {
+      equipment.push({
+        item: 'Truck Mounted Attenuator (TMA)',
+        quantity: '1',
+        specification: 'NCHRP 350 or MASH tested; fitted to shadow vehicle; rated for site speed',
+      });
+    }
+    equipment.push({
+      item: 'Hi-vis PPE',
+      quantity: `${Math.max(inp.numberOfWorkers, 1)} sets minimum`,
+      specification: 'Level 2 retroreflective vest/shirt (AS/NZS 4602.1) — all workers',
+    });
+  }
 
   if (inp.arrowBoard) {
     equipment.push({
@@ -311,7 +300,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
     });
   }
 
-  if (hasTCPD && inp.controlMethod === 'stop_slow_bats') {
+  if (hasTCPD && inp.controlMethod === 'stop_slow_bats' && !noSignSchedule) {
     equipment.push({
       item: 'STOP/SLOW bat (paddle)',
       quantity: `${Math.max(inp.numberOfControllers, isAlternating ? 2 : 1)}`,
@@ -319,7 +308,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
     });
   }
 
-  if (hasTCPD && inp.controlMethod === 'portable_signals') {
+  if (hasTCPD && inp.controlMethod === 'portable_signals' && !noSignSchedule) {
     equipment.push({
       item: 'Portable traffic lights (PTL)',
       quantity: '2 (minimum)',
@@ -327,9 +316,8 @@ export function calculate(inp: WizardInputs): CalculationResult {
     });
   }
 
-  // Delineators for longer closures
-  if (inp.worksLength > 200) {
-    const delineatorSpacing = 60; // post-mounted, Table 4.2
+  if (!noSignSchedule && inp.worksLength > 200) {
+    const delineatorSpacing = 60;
     const delineatorCount = Math.ceil(inp.worksLength / delineatorSpacing);
     equipment.push({
       item: 'Post-mounted delineators',
@@ -343,6 +331,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
   const references = [
     ...refs.primary.map(r => `[Primary] ${r}`),
     ...refs.secondary.map(r => `[Supplementary] ${r}`),
+    `[Design Step] ${designStepRef}`,
     'AS 1742.3:2019 — Table 2.2 (Sign spacing)',
     'AS 1742.3:2019 — Table 2.3 (Sight distances)',
     'AGTTM03-21 — Table 5.7 (Taper lengths)',
@@ -373,11 +362,16 @@ export function calculate(inp: WizardInputs): CalculationResult {
     warnings.push(`Worksite within ${inp.intersectionDistance} m of intersection — consult relevant road authority. Additional signs and traffic control may be required.`);
   }
 
+  // Criteria fail warnings
+  criteriaChecks.filter(c => c.status === 'fail').forEach(c => {
+    warnings.push(`CRITERIA FAIL: ${c.criterion}${c.detail ? ` — ${c.detail}` : ''}`);
+  });
+
   if (inp.footpathClosed) {
     notes.push('Footpath / shared path closed — provide pedestrian / cyclist diversion signs and suitable alternative route or temporary pathway.');
   }
 
-  if (temp < 60 && inp.worksLength > 500) {
+  if (!noSignSchedule && temp < 60 && inp.worksLength > 500) {
     notes.push(`Temp speed zone ${temp} km/h for ${inp.worksLength} m may require risk assessment and consultation with road authority.`);
   }
 
@@ -390,9 +384,21 @@ export function calculate(inp: WizardInputs): CalculationResult {
   }
 
   notes.push('All calculations are based on standard road conditions and standard lane width. A qualified Traffic Management Designer/Coordinator should review the final TMP.');
-  notes.push(`Minimum temp speed zone length: ${minTempLen} m (Table 5.5 — ${temp} km/h).`);
+
+  if (!noSignSchedule) {
+    notes.push(`Minimum temp speed zone length: ${minTempLen} m (Table 5.5 — ${temp} km/h).`);
+  }
+
+  if (noSignSchedule) {
+    notes.push(`${designStepName}: This design step does not require a standard advance warning sign schedule. Refer to the Design Step Criteria and Mandatory Requirements sections for specific obligations.`);
+  }
 
   return {
+    designStepName,
+    designStepRef,
+    designStepDescription,
+    criteriaChecks,
+    mandatoryRequirements,
     recommendedTempSpeed: temp,
     speedReductionSteps: reductionSteps,
     tempSpeedJustification: tempRec.reason,
@@ -409,6 +415,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
     prepareToStopRepeater: needsRepeaterSign,
     approachSigns,
     departureSigns,
+    noSignSchedule,
     equipment,
     references,
     warnings,

@@ -3,8 +3,8 @@ import type { CalculationResult } from './engine';
 import type { WizardInputs } from './types';
 import { WORKS_TYPE_LABELS } from './standards';
 import { TGSSchematic } from './TGSSchematic';
+import type { HistoryEntry } from './CalculatorApp';
 
-// Injected into <head> for print formatting
 const PRINT_CSS = `
 @media print {
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
@@ -26,6 +26,8 @@ interface Props {
   result: CalculationResult;
   inputs: WizardInputs;
   onBack: () => void;
+  history?: HistoryEntry[];
+  onLoadHistory?: (entry: HistoryEntry) => void;
 }
 
 function MetricCard({ label, value, unit, color = C.hivis }: {
@@ -115,7 +117,6 @@ function WarnBox({ text, kind = 'warn' }: { text: string; kind?: 'warn' | 'note'
   );
 }
 
-// State badge label for header
 function stateStdSummary(state: string): string {
   const map: Record<string, string> = {
     VIC: 'VIC CoP / AGTTM / AS 1742.3',
@@ -128,9 +129,24 @@ function stateStdSummary(state: string): string {
   return map[state] ?? 'AGTTM / AS 1742.3';
 }
 
-export function ReportView({ result: r, inputs: inp, onBack }: Props) {
+// Criteria status badge
+function CriteriaBadge({ status }: { status: 'pass' | 'fail' | 'check' }) {
+  const config = {
+    pass:  { bg: '#D4EDDA', color: '#155724', label: '✓ Pass' },
+    fail:  { bg: '#F8D7DA', color: '#721C24', label: '✗ Fail' },
+    check: { bg: '#FFF3CD', color: '#856404', label: '? Check' },
+  }[status];
+  return (
+    <span style={{
+      display: 'inline-block', padding: '2px 10px', borderRadius: 20,
+      background: config.bg, color: config.color,
+      fontSize: 11, fontWeight: 700, flexShrink: 0,
+    }}>{config.label}</span>
+  );
+}
+
+export function ReportView({ result: r, inputs: inp, onBack, history = [], onLoadHistory }: Props) {
   const handlePrint = () => {
-    // Inject print CSS once
     const existing = document.getElementById('tm-print-css');
     if (!existing) {
       const style = document.createElement('style');
@@ -166,11 +182,14 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
   ]);
 
   const eqRows = r.equipment.map(e => [e.item, e.quantity, e.specification]);
-
   const speedStepRows = r.speedReductionSteps.map(s => [
     `${s.from} km/h → ${s.to} km/h`, s.method,
     `${s.from - s.to} km/h reduction`,
   ]);
+
+  const failCount = r.criteriaChecks.filter(c => c.status === 'fail').length;
+  const checkCount = r.criteriaChecks.filter(c => c.status === 'check').length;
+  const passCount = r.criteriaChecks.filter(c => c.status === 'pass').length;
 
   return (
     <div className="report-wrap" style={{
@@ -188,6 +207,30 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
           fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
         }}>← Edit Inputs</button>
 
+        {history.length > 0 && onLoadHistory && (
+          <select
+            aria-label="Load previous calculation"
+            onChange={e => {
+              const entry = history.find(h => h.id === parseInt(e.target.value));
+              if (entry) onLoadHistory(entry);
+              e.target.value = '';
+            }}
+            defaultValue=""
+            style={{
+              padding: '9px 14px', borderRadius: 8, border: '1.5px solid var(--border-default)',
+              background: 'var(--bg-surface)', color: 'var(--fg-default)',
+              fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', outline: 'none',
+            }}
+          >
+            <option value="" disabled>📋 Load previous ({history.length})</option>
+            {[...history].reverse().map(h => (
+              <option key={h.id} value={h.id}>
+                {h.timestamp} — {h.inputs.projectName || 'Unnamed'} ({WORKS_TYPE_LABELS[h.inputs.worksType]?.split('—')[0].trim()})
+              </option>
+            ))}
+          </select>
+        )}
+
         <div style={{ flex: 1 }}/>
 
         <button onClick={handlePrint} style={{
@@ -196,7 +239,7 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
           fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
           display: 'flex', alignItems: 'center', gap: 8,
         }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
             <rect x="6" y="14" width="12" height="8"/>
           </svg>
@@ -245,18 +288,96 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
         }}>
           <div><span style={{ color: 'var(--fg-subtle)' }}>Prepared by: </span><strong>{inp.preparedBy || '—'}</strong></div>
           <div><span style={{ color: 'var(--fg-subtle)' }}>Road: </span><strong>{inp.roadName || '—'} ({inp.classification})</strong></div>
-          <div><span style={{ color: 'var(--fg-subtle)' }}>Works type: </span><strong>{WORKS_TYPE_LABELS[inp.worksType]}</strong></div>
+          <div><span style={{ color: 'var(--fg-subtle)' }}>Design step: </span><strong>{r.designStepName}</strong></div>
           <div><span style={{ color: 'var(--fg-subtle)' }}>Posted speed: </span><strong>{inp.postedSpeed} km/h</strong></div>
         </div>
 
         <div style={{ marginBottom: 32 }} />
 
-        {/* Warnings at top */}
+        {/* Warnings */}
         {r.warnings.length > 0 && (
           <Section title="⚠ Warnings — Review Before Proceeding">
             {r.warnings.map((w, i) => <WarnBox key={i} text={w} kind="warn" />)}
           </Section>
         )}
+
+        {/* Design Step & Eligibility Criteria */}
+        <Section title={`Design Step — ${r.designStepName}`}>
+          <div style={{
+            background: 'var(--paper-50)', borderRadius: 8, padding: '14px 16px', marginBottom: 16,
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--fg-default)' }}>{r.designStepName}</div>
+                <div style={{ fontSize: 12, color: C.hivis, fontWeight: 700, marginTop: 2 }}>{r.designStepRef}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 12 }}>
+                {passCount > 0 && <span style={{ padding: '3px 10px', borderRadius: 20, background: '#D4EDDA', color: '#155724', fontSize: 12, fontWeight: 700 }}>✓ {passCount} pass</span>}
+                {checkCount > 0 && <span style={{ padding: '3px 10px', borderRadius: 20, background: '#FFF3CD', color: '#856404', fontSize: 12, fontWeight: 700 }}>? {checkCount} check</span>}
+                {failCount > 0 && <span style={{ padding: '3px 10px', borderRadius: 20, background: '#F8D7DA', color: '#721C24', fontSize: 12, fontWeight: 700 }}>✗ {failCount} fail</span>}
+              </div>
+            </div>
+            {r.designStepDescription && (
+              <div style={{ fontSize: 13, color: 'var(--fg-muted)', lineHeight: 1.5, marginTop: 4 }}>
+                {r.designStepDescription}
+              </div>
+            )}
+          </div>
+
+          {/* Eligibility criteria */}
+          {r.criteriaChecks.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg-subtle)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
+                Eligibility Criteria
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {r.criteriaChecks.map(c => (
+                  <div key={c.id} style={{
+                    border: `1px solid ${c.status === 'fail' ? '#F5C6CB' : c.status === 'pass' ? '#C3E6CB' : 'var(--border-default)'}`,
+                    borderLeft: `4px solid ${c.status === 'fail' ? '#DC3545' : c.status === 'pass' ? '#28A745' : '#FFC107'}`,
+                    borderRadius: '0 8px 8px 0', padding: '10px 14px',
+                    background: c.status === 'fail' ? '#FFF5F5' : c.status === 'pass' ? '#F8FFF9' : 'var(--paper-50)',
+                    display: 'flex', gap: 12, alignItems: 'flex-start',
+                  }}>
+                    <div style={{ flexShrink: 0, marginTop: 1 }}>
+                      <CriteriaBadge status={c.status} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, color: 'var(--fg-default)', lineHeight: 1.5 }}>{c.criterion}</div>
+                      {c.detail && (
+                        <div style={{ fontSize: 12, color: c.status === 'fail' ? '#721C24' : 'var(--fg-subtle)', marginTop: 4 }}>
+                          {c.detail}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Mandatory requirements */}
+          {r.mandatoryRequirements.length > 0 && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg-subtle)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
+                Mandatory Requirements
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {r.mandatoryRequirements.map((req, i) => (
+                  <div key={i} style={{
+                    display: 'flex', gap: 10, padding: '8px 12px',
+                    background: '#E5F1FF', borderLeft: '3px solid #0A84FF',
+                    borderRadius: '0 6px 6px 0',
+                  }}>
+                    <span style={{ color: '#0A84FF', fontWeight: 700, flexShrink: 0, fontSize: 12 }}>▸</span>
+                    <span style={{ fontSize: 13, color: 'var(--fg-default)', lineHeight: 1.5 }}>{req}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Section>
 
         {/* Key metrics */}
         <Section title="Key Outputs">
@@ -271,12 +392,12 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
           {r.estimatedQueueLength !== null && (
             <div style={{ marginTop: 8 }}>
               <MetricCard
-                label={`Est. Queue Length — ${r.queueStopTimeUsed} min stop (AGTTM Table 4.3)`}
+                label={`Est. Queue Length — ${r.queueStopTimeUsed ?? '?'} min stop (AGTTM Table 4.3)`}
                 value={r.estimatedQueueLength} unit="m"
                 color={r.estimatedQueueLength > 240 ? C.stop : C.go}
               />
               <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 6 }}>
-                Based on {inp.peakHourVolume / 2} vph one direction · {inp.heavyVehiclePercent}% heavy vehicles · {r.queueStopTimeUsed} min max stop time.
+                Based on {inp.peakHourVolume / 2} vph one direction · {inp.heavyVehiclePercent}% heavy vehicles · {r.queueStopTimeUsed ?? '?'} min max stop time.
                 VPH entered as both-directions total ({inp.peakHourVolume} vph) divided by 2 for balanced directional split.
               </div>
               {r.prepareToStopRepeater && (
@@ -289,17 +410,28 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
         </Section>
 
         {/* TGS Schematic */}
-        <Section title="Traffic Guidance Scheme — Schematic Layout">
-          <div style={{
-            border: '1px solid var(--border-default)', borderRadius: 8,
-            overflow: 'hidden', background: 'var(--paper-50)',
-          }}>
-            <TGSSchematic result={r} inputs={inp} />
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 6 }}>
-            Schematic representation only — not to scale. All dimensions are calculated values; actual field placement must be verified by a qualified Traffic Management Designer. Refer to sign schedule tables below for precise positions.
-          </div>
-        </Section>
+        {!r.noSignSchedule && (
+          <Section title="Traffic Guidance Scheme — Schematic Layout">
+            <div style={{
+              border: '1px solid var(--border-default)', borderRadius: 8,
+              overflow: 'hidden', background: 'var(--paper-50)',
+            }}>
+              <TGSSchematic result={r} inputs={inp} />
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 6 }}>
+              Schematic representation only — not to scale. All dimensions are calculated values; actual field placement must be verified by a qualified Traffic Management Designer. Refer to sign schedule tables below for precise positions.
+            </div>
+          </Section>
+        )}
+
+        {r.noSignSchedule && (
+          <Section title="Traffic Guidance Scheme">
+            <WarnBox
+              text={`${r.designStepName} does not use a standard advance warning sign schedule. Refer to the Design Step Criteria and Mandatory Requirements above for specific equipment and safety obligations for this design step.`}
+              kind="info"
+            />
+          </Section>
+        )}
 
         {/* Temp speed justification */}
         <Section title="Recommended Temp Speed — Justification">
@@ -324,46 +456,51 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
           )}
         </Section>
 
-        {/* All key distances */}
-        <Section title="Calculated Distances &amp; Spacings">
-          <div style={{ columns: 1 }}>
-            {distRows.map(([label, value, ref], i) => (
-              <div key={i} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-                padding: '8px 0', borderBottom: '1px solid var(--border-default)',
-              }}>
-                <div>
-                  <span style={{ fontSize: 14, color: 'var(--fg-default)' }}>{label as string}</span>
-                  <span style={{ fontSize: 11, color: 'var(--fg-subtle)', marginLeft: 8 }}>{ref as string}</span>
+        {/* Key distances */}
+        {!r.noSignSchedule && (
+          <Section title="Calculated Distances &amp; Spacings">
+            <div style={{ columns: 1 }}>
+              {distRows.map(([label, value, ref], i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  padding: '8px 0', borderBottom: '1px solid var(--border-default)',
+                }}>
+                  <div>
+                    <span style={{ fontSize: 14, color: 'var(--fg-default)' }}>{label as string}</span>
+                    <span style={{ fontSize: 11, color: 'var(--fg-subtle)', marginLeft: 8 }}>{ref as string}</span>
+                  </div>
+                  <span style={{
+                    fontSize: 16, fontWeight: 700, color: 'var(--fg-default)',
+                    fontFamily: 'var(--font-mono)',
+                  }}>{value as string}</span>
                 </div>
-                <span style={{
-                  fontSize: 16, fontWeight: 700, color: 'var(--fg-default)',
-                  fontFamily: 'var(--font-mono)',
-                }}>{value as string}</span>
-              </div>
-            ))}
-          </div>
-        </Section>
+              ))}
+            </div>
+          </Section>
+        )}
 
-        {/* Sign schedule approach */}
-        <Section title="Sign Schedule — Approach End (upstream to taper)">
-          <TmTable
-            heads={['#', 'Code', 'Description', 'Position', 'Notes']}
-            rows={approachRows}
-          />
-          <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 8 }}>
-            Positions measured from approach taper start (0 m). Negative = upstream of taper start.
-            Actual field measurements should be confirmed by a qualified TMP designer.
-          </div>
-        </Section>
+        {/* Sign schedule — only for full-zone types */}
+        {!r.noSignSchedule && approachRows.length > 0 && (
+          <Section title="Sign Schedule — Approach End (upstream to taper)">
+            <TmTable
+              heads={['#', 'Code', 'Description', 'Position', 'Notes']}
+              rows={approachRows}
+            />
+            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 8 }}>
+              Positions measured from approach taper start (0 m). Negative = upstream of taper start.
+              Actual field measurements should be confirmed by a qualified TMP designer.
+            </div>
+          </Section>
+        )}
 
-        {/* Sign schedule departure */}
-        <Section title="Sign Schedule — Departure End (downstream of work zone)">
-          <TmTable
-            heads={['#', 'Code', 'Description', 'Position', 'Notes']}
-            rows={departureRows}
-          />
-        </Section>
+        {!r.noSignSchedule && departureRows.length > 0 && (
+          <Section title="Sign Schedule — Departure End (downstream of work zone)">
+            <TmTable
+              heads={['#', 'Code', 'Description', 'Position', 'Notes']}
+              rows={departureRows}
+            />
+          </Section>
+        )}
 
         {/* Equipment */}
         <Section title="Equipment List">

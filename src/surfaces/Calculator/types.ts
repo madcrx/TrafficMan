@@ -4,21 +4,49 @@ export type AustralianState = 'VIC' | 'NSW' | 'QLD' | 'WA' | 'SA' | 'TAS' | 'NT'
 
 export type RoadClassification = 'freeway' | 'highway' | 'arterial' | 'collector' | 'local';
 
+export type WorksCategory = 'static' | 'mobile' | 'stli';
+
 export type WorksType =
-  | 'shoulder_only'
-  | 'lane_closure_2lane'
-  | 'lane_closure_multilane'
-  | 'full_road_closure'
-  | 'utility_underground'
-  | 'pavement_resurfacing'
-  | 'bridge_works'
-  | 'tree_trimming'
-  | 'other';
+  // Static — Around the Worksite (AGTTM Part 3, Section 3.2)
+  | 'around_detour'
+  | 'around_sidetrack'
+  | 'around_contraflow'
+  // Static — Through the Worksite (AGTTM Part 3, Section 3.3)
+  | 'through_alternating'
+  | 'through_shuttle'
+  | 'through_pilot'
+  // Static — Past the Worksite (AGTTM Part 3, Section 3.4)
+  | 'past_lane_closure'
+  | 'past_contraflow'
+  | 'past_shoulder'
+  | 'past_pavement'
+  | 'past_bridge'
+  // Mobile Works (AGTTM Part 4)
+  | 'mobile_class1'
+  | 'mobile_class2'
+  | 'mobile_class3'
+  // STLI — Within Traffic Lane (AGTTM Part 5, Sections 4.1–4.5)
+  | 'stli_specialist'
+  | 'stli_gaps'
+  | 'stli_short_term'
+  | 'stli_freq_lane'
+  | 'stli_moving'
+  // STLI — Outside Traffic Lane (AGTTM Part 5, Sections 5.1–5.3)
+  | 'stli_shoulder_foot'
+  | 'stli_shoulder_plant'
+  | 'stli_freq_outside';
 
 export type WorksDuration = 'short_term' | 'day_works' | 'night_works' | 'multi_day';
 export type ControlMethod = 'none' | 'stop_slow_bats' | 'portable_signals' | 'pilot_vehicle' | 'police';
 export type RoadGeometry = 'straight' | 'curve' | 'crest';
 export type WeatherCondition = 'clear' | 'rain' | 'fog' | 'high_wind';
+
+export interface CriteriaCheck {
+  id: string;
+  criterion: string;
+  status: 'pass' | 'fail' | 'check';
+  detail?: string;
+}
 
 export interface WizardInputs {
   // Step 1 – Who & project
@@ -33,49 +61,51 @@ export interface WizardInputs {
   // Step 2 – Road
   roadName: string;
   classification: RoadClassification;
-  postedSpeed: number;           // km/h
-  lanesInDirection: number;      // lanes in direction of travel through works
-  laneWidth: number;             // metres, default 3.5
+  postedSpeed: number;
+  lanesInDirection: number;
+  laneWidth: number;
   medianDivided: boolean;
+  medianWidth: number;            // metres — 0 = unknown/not applicable
   geometry: RoadGeometry;
-  curveRadius: number;           // metres, if geometry = curve
-  sightIssue: boolean;           // crest, bend, or obstruction reducing sight
+  curveRadius: number;
+  sightIssue: boolean;
 
   // Step 3 – Works
+  worksCategory: WorksCategory;
   worksType: WorksType;
   worksDescription: string;
-  worksLength: number;           // metres
+  worksLength: number;
   duration: WorksDuration;
   nightWorks: boolean;
   workersOnFoot: boolean;
   numberOfWorkers: number;
-  workerProximity: number;       // metres from nearest moving lane
+  workerProximity: number;
   plantOnSite: boolean;
-  plantProximity: number;        // metres from nearest moving lane
+  plantProximity: number;
   excavations: boolean;
-  excavationDepth: number;       // mm
-  excavationProximity: number;   // metres from nearest moving lane
+  excavationDepth: number;
+  excavationProximity: number;
   freshBitumen: boolean;
   footpathClosed: boolean;
 
   // Step 4 – Traffic & environment
-  peakHourVolume: number;        // vph, both directions combined
-  heavyVehiclePercent: number;   // %
+  peakHourVolume: number;
+  heavyVehiclePercent: number;
   weather: WeatherCondition;
   visibility: 'good' | 'reduced' | 'poor';
   nearIntersection: boolean;
-  intersectionDistance: number;  // metres
+  intersectionDistance: number;
 
   // Step 5 – Control
   controlMethod: ControlMethod;
   numberOfControllers: number;
   arrowBoard: boolean;
   vms: boolean;
-  overrideTemp: boolean;         // user wants to override recommended temp speed
-  manualTempSpeed: number;       // if override = true
+  overrideTemp: boolean;
+  manualTempSpeed: number;
 
   // Queue calculation
-  maxStopTime: number;           // minutes — 0 = auto-estimate from zone length
+  maxStopTime: number;  // minutes — 0 = auto-estimate from zone length
 }
 
 // ─── Output types ──────────────────────────────────────────────
@@ -84,7 +114,7 @@ export interface SignItem {
   sequence: number;
   code: string;
   description: string;
-  distanceFromTaperStart: number; // negative = upstream; positive = downstream
+  distanceFromTaperStart: number;
   notes: string;
 }
 
@@ -101,29 +131,37 @@ export interface SpeedStep {
 }
 
 export interface CalculationResult {
+  // Design step
+  designStepName: string;
+  designStepRef: string;
+  designStepDescription: string;
+  criteriaChecks: CriteriaCheck[];
+  mandatoryRequirements: string[];
+
   // Speeds
   recommendedTempSpeed: number;
   speedReductionSteps: SpeedStep[];
   tempSpeedJustification: string;
 
-  // Key distances (all in metres)
-  approachSignSpacing: number;       // sign spacing in approach zone
-  sightDistanceM: number;            // PREPARE TO STOP placement distance
-  mergeTaperLength: number;          // approach (merge) taper
-  lateralShiftTaper: number;         // lateral shift taper if used
+  // Key distances (metres)
+  approachSignSpacing: number;
+  sightDistanceM: number;
+  mergeTaperLength: number;
+  lateralShiftTaper: number;
   bufferZoneLength: number;
-  distBetweenTapers: number;         // departure taper minimum offset
+  distBetweenTapers: number;
   coneSpacingM: number;
-  coneSpacingTaperM: number;         // within taper (always 4m max)
+  coneSpacingTaperM: number;
 
-  // Queue (for stop/slow scenarios)
-  estimatedQueueLength: number | null;   // metres
-  queueStopTimeUsed: number | null;      // stop time assumption used (minutes)
-  prepareToStopRepeater: boolean;        // if queue >240m
+  // Queue
+  estimatedQueueLength: number | null;
+  queueStopTimeUsed: number | null;
+  prepareToStopRepeater: boolean;
 
-  // Sign schedule (approach end)
+  // Sign schedules
   approachSigns: SignItem[];
   departureSigns: SignItem[];
+  noSignSchedule: boolean;  // true for STLI/mobile types
 
   // Equipment
   equipment: EquipmentItem[];
@@ -133,6 +171,5 @@ export interface CalculationResult {
   warnings: string[];
   notes: string[];
 
-  // Minimum temp speed zone length (from Table 5.5)
   minTempZoneLength: number;
 }

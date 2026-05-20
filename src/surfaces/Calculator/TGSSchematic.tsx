@@ -1,5 +1,6 @@
 import type { CalculationResult } from './engine';
 import type { WizardInputs } from './types';
+import { getDesignStep } from './standards';
 
 // ── Constants ──────────────────────────────────────────────────────
 const SVG_W = 960;
@@ -112,9 +113,10 @@ function ZoneLabel({ x1, x2, y, label, color = C_ZONE_LBL }: {
 interface Props { result: CalculationResult; inputs: WizardInputs }
 
 export function TGSSchematic({ result: r, inputs: inp }: Props) {
-  const isAlternating = inp.worksType === 'lane_closure_2lane';
-  const isFullClosure = inp.worksType === 'full_road_closure';
-  const isShoulderOnly = inp.worksType === 'shoulder_only';
+  const stepDef = getDesignStep(inp.worksType);
+  const isAlternating = stepDef?.isAlternating ?? false;
+  const isFullClosure = stepDef?.isFullClosure ?? false;
+  const isShoulderOnly = stepDef?.isShoulderOnly ?? false;
   const hasTCPD = ['stop_slow_bats', 'portable_signals', 'police'].includes(inp.controlMethod);
 
   // Collect all approach signs sorted by position (already sorted in engine output)
