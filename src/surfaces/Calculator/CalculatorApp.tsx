@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { C } from '../../components/tokens';
 import type { WizardInputs, AustralianState, RoadClassification, WorksType, ControlMethod, RoadGeometry, WeatherCondition } from './types';
-import { WORKS_TYPE_LABELS } from './standards';
+import { WORKS_TYPE_LABELS, suggestStopTime } from './standards';
 import { calculate } from './engine';
 import type { CalculationResult } from './engine';
 import { ReportView } from './ReportView';
@@ -28,6 +28,7 @@ const defaultInputs: WizardInputs = {
   nearIntersection: false, intersectionDistance: 0,
   controlMethod: 'stop_slow_bats', numberOfControllers: 2,
   arrowBoard: false, vms: false, overrideTemp: false, manualTempSpeed: 40,
+  maxStopTime: 0,  // 0 = auto-estimate from zone length
 };
 
 // ── Input helpers ──────────────────────────────────────────────────
@@ -470,6 +471,27 @@ function Step4({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
           <NumInput value={inp.intersectionDistance} onChange={v => set('intersectionDistance', v)} min={0} />
         </Field>
       )}
+
+      <Divider label="Queue calculation" />
+      <Field
+        label="Maximum Stop Time (minutes)"
+        hint={`How long is one direction held before traffic is released? Set to 0 to auto-estimate from zone length (suggested: ${suggestStopTime(inp.worksLength)} min for a ${inp.worksLength} m zone). Applies to alternating control, full closures and portable signals.`}
+      >
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {([0, 2, 5, 10, 15, 30] as const).map(t => {
+            const active = inp.maxStopTime === t;
+            return (
+              <button key={t} type="button" onClick={() => set('maxStopTime', t)} style={{
+                padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                border: active ? `2px solid ${C.hivis}` : '1.5px solid var(--border-default)',
+                background: active ? C.hivis : 'var(--bg-surface)',
+                color: active ? C.ink900 : 'var(--fg-default)',
+                fontSize: 14, fontWeight: 700, fontFamily: 'inherit',
+              }}>{t === 0 ? 'Auto' : `${t} min`}</button>
+            );
+          })}
+        </div>
+      </Field>
     </>
   );
 }

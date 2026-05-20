@@ -4,8 +4,8 @@ import {
 import {
   signSpacing, sightDistance, taperLengths, scaleTaper, distBetweenTapers,
   coneSpacing, CONE_TAPER_SPACING, recommendedTempSpeed, minTempZoneLength,
-  speedReductionSteps, estimatedQueueLength, bufferZoneMin, stateStandards,
-  signName,
+  speedReductionSteps, estimatedQueueLength, suggestStopTime, bufferZoneMin,
+  stateStandards, signName,
 } from './standards';
 
 export function calculate(inp: WizardInputs): CalculationResult {
@@ -64,10 +64,32 @@ export function calculate(inp: WizardInputs): CalculationResult {
   const distTapers = distBetweenTapers(temp);
 
   // ── 7. Queue length estimate ────────────────────────────────────
+  // Queue applies when one direction is fully stopped: alternating control,
+  // full road closure with pilot vehicle or signals, portable signals on single lane.
+  const queueScenario =
+    isAlternating ||
+    isFullClosure ||
+    (isLaneClosure && inp.controlMethod === 'portable_signals');
+
   let queueLength: number | null = null;
-  if (isAlternating && inp.peakHourVolume > 0) {
-    // Estimate max stop time: 5 min for typical one-way control
-    queueLength = estimatedQueueLength(inp.peakHourVolume, 5);
+  let queueStopTime: number | null = null;
+
+  if (queueScenario && inp.peakHourVolume > 0) {
+    // Stop time: use user value if provided, otherwise auto-suggest from zone length
+    queueStopTime = (inp.maxStopTime > 0)
+      ? inp.maxStopTime
+      : suggestStopTime(inp.worksLength);
+
+    // peakHourVolume is entered as BOTH directions combined; for queue we need
+    // the one-direction volume (the direction being held).
+    // Divide by 2 assumes balanced directional split — user can adjust if needed.
+    const vphOneDir = inp.peakHourVolume / 2;
+
+    queueLength = estimatedQueueLength(
+      vphOneDir,
+      queueStopTime,
+      inp.heavyVehiclePercent,
+    );
   }
   const needsRepeaterSign = queueLength !== null && queueLength > 240;
 
@@ -383,6 +405,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
     coneSpacingM:         coneThru,
     coneSpacingTaperM:    CONE_TAPER_SPACING,
     estimatedQueueLength: queueLength,
+    queueStopTimeUsed:    queueStopTime,
     prepareToStopRepeater: needsRepeaterSign,
     approachSigns,
     departureSigns,

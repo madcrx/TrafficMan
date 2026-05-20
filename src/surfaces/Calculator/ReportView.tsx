@@ -270,12 +270,18 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
           {r.estimatedQueueLength !== null && (
             <div style={{ marginTop: 8 }}>
               <MetricCard
-                label="Est. Queue Length (one-way alternating)"
+                label={`Est. Queue Length — ${r.queueStopTimeUsed} min stop (AGTTM Table 4.3)`}
                 value={r.estimatedQueueLength} unit="m"
                 color={r.estimatedQueueLength > 240 ? C.stop : C.go}
               />
+              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 6 }}>
+                Based on {inp.peakHourVolume / 2} vph one direction · {inp.heavyVehiclePercent}% heavy vehicles · {r.queueStopTimeUsed} min max stop time.
+                VPH entered as both-directions total ({inp.peakHourVolume} vph) divided by 2 for balanced directional split.
+              </div>
               {r.prepareToStopRepeater && (
-                <WarnBox text="Queue exceeds 240 m — PREPARE TO STOP repeater sign required per Table 4.4(a)." kind="warn" />
+                <div style={{ marginTop: 8 }}>
+                  <WarnBox text="Queue exceeds 240 m — PREPARE TO STOP repeater sign required per AGTTM Table 4.4(a). Place 120 m upstream of the first PREPARE TO STOP sign." kind="warn" />
+                </div>
               )}
             </div>
           )}

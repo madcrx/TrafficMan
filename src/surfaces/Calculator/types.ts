@@ -73,6 +73,9 @@ export interface WizardInputs {
   vms: boolean;
   overrideTemp: boolean;         // user wants to override recommended temp speed
   manualTempSpeed: number;       // if override = true
+
+  // Queue calculation
+  maxStopTime: number;           // minutes — 0 = auto-estimate from zone length
 }
 
 // ─── Output types ──────────────────────────────────────────────
@@ -115,6 +118,7 @@ export interface CalculationResult {
 
   // Queue (for stop/slow scenarios)
   estimatedQueueLength: number | null;   // metres
+  queueStopTimeUsed: number | null;      // stop time assumption used (minutes)
   prepareToStopRepeater: boolean;        // if queue >240m
 
   // Sign schedule (approach end)

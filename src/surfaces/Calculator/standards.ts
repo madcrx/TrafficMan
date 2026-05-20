@@ -179,22 +179,46 @@ export function speedReductionSteps(
 }
 
 // ─── Table 4.3 / Queue length estimate ─────────────────────────
-// vph = vehicles per hour (both directions), stopTimeMin = max stop time
-export function estimatedQueueLength(vphBothDirs: number, stopTimeMin: number): number {
-  // vph per direction = vphBothDirs / 2
-  const vphDir = vphBothDirs / 2;
-  // 5-minute count = vphDir / 12
-  const fiveMinCount = vphDir / 12;
-  // Multipliers from Table 4.3
+// AGTTM Table 4.3 multipliers convert (5-min one-direction count) directly to
+// queue length in METRES — they already embed a 6 m average car spacing.
+// To adjust for heavy vehicles we scale by the actual average spacing / 6 m.
+//
+// vphOneDir  = one-direction peak hour volume (vph)
+// stopTimeMin = maximum stop time the controlled queue experiences (minutes)
+// heavyPct    = percentage of heavy vehicles (0–100)
+export function estimatedQueueLength(
+  vphOneDir: number,
+  stopTimeMin: number,
+  heavyPct: number,
+): number {
+  // 5-minute count in the stopped direction
+  const fiveMinCount = vphOneDir / 12;
+
+  // AGTTM Table 4.3 multipliers (metres of queue per unit of 5-min count, based on 6 m car spacing)
   const multipliers: Record<number, number> = { 2: 2.4, 5: 6, 10: 12, 15: 18, 30: 36 };
-  // Find nearest stop time
   const keys = [2, 5, 10, 15, 30];
-  const nearest = keys.reduce((a, b) => Math.abs(b - stopTimeMin) < Math.abs(a - stopTimeMin) ? b : a);
-  const ma = multipliers[nearest] ?? 6;
-  const avgVehicles = fiveMinCount * ma;
-  const heavyFactor = 0.15; // assume 15% heavy if not specified
-  const avgLength = avgVehicles * (1 - heavyFactor) * 6 + avgVehicles * heavyFactor * 20;
-  return Math.round(avgLength);
+  const nearest = keys.reduce((a, b) =>
+    Math.abs(b - stopTimeMin) < Math.abs(a - stopTimeMin) ? b : a);
+  const multiplier = multipliers[nearest] ?? 6;
+
+  // Base queue length assuming all cars (6 m spacing)
+  const baseQueueM = fiveMinCount * multiplier;
+
+  // Scale for actual vehicle mix: cars ≈ 6 m spacing, heavy vehicles ≈ 19 m spacing
+  const f = Math.min(Math.max(heavyPct / 100, 0), 1);
+  const avgSpacingM = (1 - f) * 6 + f * 19;
+  return Math.round(baseQueueM * (avgSpacingM / 6));
+}
+
+// ─── Suggest stop time from zone length ────────────────────────
+// Returns the nearest AGTTM Table 4.3 standard stop-time value (minutes).
+// Used as a default when the user has not specified a manual value.
+export function suggestStopTime(worksLengthM: number): number {
+  if (worksLengthM <= 100) return 2;
+  if (worksLengthM <= 300) return 5;
+  if (worksLengthM <= 600) return 10;
+  if (worksLengthM <= 1000) return 15;
+  return 30;
 }
 
 // ─── Buffer zone minimum ────────────────────────────────────────
