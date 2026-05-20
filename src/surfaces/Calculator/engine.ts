@@ -27,7 +27,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
   const isLaneClosure = stepDef?.isLaneClosure ?? false;
   const isShoulderOnly = stepDef?.isShoulderOnly ?? false;
   const isMultilane = inp.lanesInDirection > 1;
-  const hasTCPD = ['stop_slow_bats', 'portable_signals', 'police'].includes(inp.controlMethod);
+  const hasTCPD = ['stop_slow_bats', 'portable_signals', 'boom_gate', 'police'].includes(inp.controlMethod);
 
   // ── 1. Recommended temp speed ──────────────────────────────────
   const workerProx = inp.workersOnFoot ? inp.workerProximity : null;
@@ -42,7 +42,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
   // QLD mandatory 60 km/h when PTCD deployed on roads >60 km/h
   let qldNote = '';
   if (state === 'QLD' && hasTCPD && posted > 60 && temp > 60) {
-    qldNote = 'QLD: QGTTM requires a mandatory 60 km/h temp speed zone when traffic controllers are deployed on roads >60 km/h.';
+    qldNote = 'QLD: QGTTM requires a mandatory 60 km/h temp speed zone when a PTCD (traffic controller, portable signals or boom gate) is deployed on roads with a posted speed >60 km/h.';
   }
 
   // ── 2. Speed reduction steps ────────────────────────────────────
@@ -75,7 +75,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
   const queueScenario =
     isAlternating ||
     isFullClosure ||
-    (isLaneClosure && inp.controlMethod === 'portable_signals');
+    (isLaneClosure && ['portable_signals', 'boom_gate'].includes(inp.controlMethod));
 
   let queueLength: number | null = null;
   let queueStopTime: number | null = null;
@@ -98,17 +98,38 @@ export function calculate(inp: WizardInputs): CalculationResult {
     let curPos = 0;
 
     if (hasTCPD && (isAlternating || isFullClosure)) {
+      const ptcdCode =
+        inp.controlMethod === 'stop_slow_bats' ? 'TC'
+        : inp.controlMethod === 'portable_signals' ? 'PTL'
+        : inp.controlMethod === 'boom_gate' ? 'BG'
+        : 'PC'; // police
+
+      const ptcdApproachDesc =
+        inp.controlMethod === 'stop_slow_bats'
+          ? `Traffic controller — STOP/SLOW bat (${Math.max(inp.numberOfControllers, 1)} operator${inp.numberOfControllers > 1 ? 's' : ''})`
+        : inp.controlMethod === 'portable_signals'
+          ? 'Portable traffic light (STOP signal) — approach head'
+        : inp.controlMethod === 'boom_gate'
+          ? 'Boom gate — barrier DOWN (approach end); RED signal displayed to oncoming traffic'
+        : 'Police control point';
+
+      const ptcdApproachNotes =
+        inp.controlMethod === 'boom_gate'
+          ? 'Boom gate at taper start; min 5.5 m clearance width; integrated red/green signal heads; backup power supply required'
+          : 'Position at start of taper; maintain 2 m minimum clearance from traffic';
+
       approachSigns.push({
         sequence: seq++,
-        code: inp.controlMethod === 'stop_slow_bats' ? 'TC' : 'PTL',
-        description: inp.controlMethod === 'stop_slow_bats'
-          ? `Traffic controller position — STOP/SLOW bat (${Math.max(inp.numberOfControllers, 1)} operator${inp.numberOfControllers > 1 ? 's' : ''})`
-          : inp.controlMethod === 'portable_signals'
-          ? 'Portable traffic light (STOP signal) — approach head'
-          : 'Police control point',
+        code: ptcdCode,
+        description: ptcdApproachDesc,
         distanceFromTaperStart: 0,
-        notes: 'Position at start of taper; maintain 2 m minimum clearance from traffic',
+        notes: ptcdApproachNotes,
       });
+
+      const ptcdDevice =
+        inp.controlMethod === 'boom_gate' ? 'boom gate'
+        : inp.controlMethod === 'portable_signals' ? 'traffic light head'
+        : 'traffic controller';
 
       curPos = -sightDist;
       approachSigns.push({
@@ -116,7 +137,7 @@ export function calculate(inp: WizardInputs): CalculationResult {
         code: 'TM1-18B',
         description: signName('PREPARE TO STOP', state),
         distanceFromTaperStart: curPos,
-        notes: `Placed ${sightDist} m upstream of traffic controller (sight distance Table 2.3 — ${temp} km/h)`,
+        notes: `Placed ${sightDist} m upstream of ${ptcdDevice} (sight distance AS 1742.3 Table 2.3 — ${temp} km/h)`,
       });
 
       if (needsRepeaterSign) {
@@ -125,19 +146,23 @@ export function calculate(inp: WizardInputs): CalculationResult {
           code: 'TM1-18B-R',
           description: 'PREPARE TO STOP (repeater)',
           distanceFromTaperStart: curPos - 120,
-          notes: `Queue estimated at ${queueLength} m — repeater required per Table 4.4(a); place 120 m upstream of first PREPARE TO STOP`,
+          notes: `Queue estimated at ${queueLength} m — repeater required per AGTTM Table 4.4(a); place 120 m upstream of first PREPARE TO STOP`,
         });
         curPos -= 120;
       }
 
-      curPos -= approachSpacing;
-      approachSigns.push({
-        sequence: seq++,
-        code: 'W5-2',
-        description: signName('TRAFFIC CONTROLLERS AHEAD', state),
-        distanceFromTaperStart: curPos,
-        notes: `Spaced ${approachSpacing} m from PREPARE TO STOP sign`,
-      });
+      // W5-2 TRAFFIC CONTROLLERS AHEAD — only for human traffic controllers and police.
+      // Not applicable to portable signals or boom gates (no human controller present).
+      if (inp.controlMethod === 'stop_slow_bats' || inp.controlMethod === 'police') {
+        curPos -= approachSpacing;
+        approachSigns.push({
+          sequence: seq++,
+          code: 'W5-2',
+          description: signName('TRAFFIC CONTROLLERS AHEAD', state),
+          distanceFromTaperStart: curPos,
+          notes: `Spaced ${approachSpacing} m from PREPARE TO STOP sign`,
+        });
+      }
     }
 
     if (reductionSteps.length > 0) {
@@ -210,14 +235,29 @@ export function calculate(inp: WizardInputs): CalculationResult {
     let depPos = primaryTaper + bufferLength + inp.worksLength;
 
     if (hasTCPD && (isAlternating || isFullClosure)) {
+      const ptcdCode =
+        inp.controlMethod === 'stop_slow_bats' ? 'TC'
+        : inp.controlMethod === 'portable_signals' ? 'PTL'
+        : inp.controlMethod === 'boom_gate' ? 'BG'
+        : 'PC';
+
+      const ptcdDeptDesc =
+        inp.controlMethod === 'stop_slow_bats'
+          ? 'Traffic controller — SLOW/GO bat (departure end)'
+        : inp.controlMethod === 'portable_signals'
+          ? 'Portable traffic light — departure head'
+        : inp.controlMethod === 'boom_gate'
+          ? 'Boom gate — departure end; GREEN signal on release; RED while approach end is open'
+        : 'Police control point — departure end';
+
       departureSigns.push({
         sequence: seq++,
-        code: inp.controlMethod === 'stop_slow_bats' ? 'TC' : 'PTL',
-        description: inp.controlMethod === 'stop_slow_bats'
-          ? 'Traffic controller position — SLOW/GO bat (departure end)'
-          : 'Portable traffic light — departure head',
+        code: ptcdCode,
+        description: ptcdDeptDesc,
         distanceFromTaperStart: primaryTaper + bufferLength,
-        notes: 'Controls traffic exiting work zone; departs when safe to go',
+        notes: inp.controlMethod === 'boom_gate'
+          ? 'Boom gates at both ends must be interlocked — only one end open at any time'
+          : 'Controls traffic exiting work zone; departs when safe to go',
       });
       depPos = primaryTaper + bufferLength + inp.worksLength + distTapers;
     }
@@ -316,6 +356,19 @@ export function calculate(inp: WizardInputs): CalculationResult {
     });
   }
 
+  if (hasTCPD && inp.controlMethod === 'boom_gate' && !noSignSchedule) {
+    equipment.push({
+      item: 'Boom gate (automated barrier)',
+      quantity: '2 units (approach and departure ends)',
+      specification: 'Automated boom with integrated red/green signal heads; interlocked pair — only one end open at a time; backup power supply; min 5.5 m clearance width; function-tested before opening to traffic',
+    });
+    equipment.push({
+      item: 'Boom gate attendant',
+      quantity: isAlternating ? '2 minimum (one per end)' : '1 minimum',
+      specification: 'Trained operator; two-way radio communication; hi-vis PPE Level 2 (AS/NZS 4602.1); must remain at gate while in operation',
+    });
+  }
+
   if (!noSignSchedule && inp.worksLength > 200) {
     const delineatorSpacing = 60;
     const delineatorCount = Math.ceil(inp.worksLength / delineatorSpacing);
@@ -345,9 +398,13 @@ export function calculate(inp: WizardInputs): CalculationResult {
 
   if (state === 'WA') {
     warnings.push('WA: Portable Traffic Control Device (PTCD) mandatory on MRWA roads (July 2022). Speed Feedback Signs mandatory (Feb 2024).');
-    if (inp.controlMethod === 'stop_slow_bats') {
-      warnings.push('WA: Shadow vehicle required when traffic controllers deployed on roads ≥80 km/h (June 2024).');
+    if (inp.controlMethod === 'stop_slow_bats' || inp.controlMethod === 'boom_gate') {
+      warnings.push('WA: Shadow vehicle required when traffic controllers or boom gate operators are deployed on roads ≥80 km/h (June 2024).');
     }
+  }
+
+  if (inp.controlMethod === 'boom_gate') {
+    notes.push('Boom gate: device must have red/green signal heads clearly visible to approaching drivers from the required sight distance. Backup power supply mandatory. Function test required daily before opening to traffic. Both ends must be interlocked — opening one end must automatically hold (or close) the other. Refer to AGTTM Part 3 and applicable state/territory requirements for boom gate specific obligations.');
   }
 
   if (inp.excavations && inp.excavationDepth > 250 && inp.excavationProximity < 5) {
