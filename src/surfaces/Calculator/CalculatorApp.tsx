@@ -635,7 +635,7 @@ function Step4({ inp, set }: { inp: WizardInputs; set: <K extends keyof WizardIn
       <Divider label="Queue calculation" />
       <Field
         label="Maximum Stop Time (minutes)"
-        hint={`How long is one direction held before traffic is released? Set to Auto to estimate from zone length (suggested: ${suggestStopTime(inp.worksLength)} min for a ${inp.worksLength} m zone). Applies to alternating control, full closures and portable signals.`}
+        hint={`How long is one direction held before traffic is released? Set to Auto to estimate from zone length (suggested: ${suggestStopTime(inp.worksLength)} min for a ${inp.worksLength} m zone). Applies to alternating control (STOP/SLOW bats), full closures, and lane closures controlled by portable signals.`}
       >
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {([0, 2, 5, 10, 15, 30] as const).map(t => {

@@ -391,12 +391,12 @@ export function ReportView({ result: r, inputs: inp, onBack, history = [], onLoa
           {r.estimatedQueueLength !== null && (
             <div style={{ marginTop: 8 }}>
               <MetricCard
-                label={`Est. Queue Length — ${r.queueStopTimeUsed} min stop (AGTTM Table 4.3)`}
+                label={`Est. Queue Length — ${r.queueStopTimeUsed ?? '?'} min stop (AGTTM Table 4.3)`}
                 value={r.estimatedQueueLength} unit="m"
                 color={r.estimatedQueueLength > 240 ? C.stop : C.go}
               />
               <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 6 }}>
-                Based on {inp.peakHourVolume / 2} vph one direction · {inp.heavyVehiclePercent}% heavy vehicles · {r.queueStopTimeUsed} min max stop time.
+                Based on {inp.peakHourVolume / 2} vph one direction · {inp.heavyVehiclePercent}% heavy vehicles · {r.queueStopTimeUsed ?? '?'} min max stop time.
                 VPH entered as both-directions total ({inp.peakHourVolume} vph) divided by 2 for balanced directional split.
               </div>
               {r.prepareToStopRepeater && (
