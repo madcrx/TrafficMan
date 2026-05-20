@@ -117,6 +117,17 @@ function WarnBox({ text, kind = 'warn' }: { text: string; kind?: 'warn' | 'note'
   );
 }
 
+function controlMethodLabel(method: string, n: number): string {
+  switch (method) {
+    case 'stop_slow_bats': return `Traffic Controller — STOP/SLOW bat${n > 1 ? ` (${n} operators)` : ''}`;
+    case 'portable_signals': return 'Portable Traffic Lights (PTL)';
+    case 'boom_gate': return 'Boom Gate (automated barrier)';
+    case 'pilot_vehicle': return 'Pilot Vehicle';
+    case 'police': return `Police Control${n > 1 ? ` (${n} officers)` : ''}`;
+    default: return 'Signs only (no PTCD)';
+  }
+}
+
 function stateStdSummary(state: string): string {
   const map: Record<string, string> = {
     VIC: 'VIC CoP / AGTTM / AS 1742.3',
@@ -304,6 +315,19 @@ export function ReportView({ result: r, inputs: inp, onBack, history = [], onLoa
           <div><span style={{ color: 'var(--fg-subtle)' }}>Road: </span><strong>{inp.roadName || '—'} ({inp.classification})</strong></div>
           <div><span style={{ color: 'var(--fg-subtle)' }}>Design step: </span><strong>{r.designStepName}</strong></div>
           <div><span style={{ color: 'var(--fg-subtle)' }}>Posted speed: </span><strong>{inp.postedSpeed} km/h</strong></div>
+          <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--border-default)', paddingTop: 8, marginTop: 4 }}>
+            <span style={{ color: 'var(--fg-subtle)' }}>Traffic control: </span>
+            <strong style={{ color: inp.controlMethod === 'none' ? 'var(--fg-default)' : C.hivis }}>
+              {controlMethodLabel(inp.controlMethod, inp.numberOfControllers)}
+            </strong>
+            {inp.controlMethod !== 'none' && inp.controlMethod !== 'pilot_vehicle' && (
+              <span style={{
+                marginLeft: 10, fontSize: 11, fontWeight: 700,
+                padding: '2px 8px', borderRadius: 10,
+                background: '#FFF3E9', color: C.hivis,
+              }}>PTCD</span>
+            )}
+          </div>
         </div>
 
         <div style={{ marginBottom: 32 }} />

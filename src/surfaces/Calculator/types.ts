@@ -37,7 +37,7 @@ export type WorksType =
   | 'stli_freq_outside';
 
 export type WorksDuration = 'short_term' | 'day_works' | 'night_works' | 'multi_day';
-export type ControlMethod = 'none' | 'stop_slow_bats' | 'portable_signals' | 'pilot_vehicle' | 'police';
+export type ControlMethod = 'none' | 'stop_slow_bats' | 'portable_signals' | 'boom_gate' | 'pilot_vehicle' | 'police';
 export type RoadGeometry = 'straight' | 'curve' | 'crest';
 export type WeatherCondition = 'clear' | 'rain' | 'fog' | 'high_wind';
 

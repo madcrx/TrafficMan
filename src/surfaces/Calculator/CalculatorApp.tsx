@@ -884,21 +884,22 @@ const Step5 = memo(function Step5({ inp, set }: { inp: WizardInputs; set: SetFn 
         How will traffic be managed through or around the work zone?
       </p>
 
-      <Field label="Control Method">
+      <Field label="PTCD / Control Method" hint="Select the type of traffic control device or method to be used">
         <CardPicker<ControlMethod>
-          value={inp.controlMethod} onChange={v => set('controlMethod', v)} cols={2}
+          value={inp.controlMethod} onChange={v => set('controlMethod', v)} cols={3}
           options={[
-            { value: 'none', label: 'No Control', sub: 'Signs only (shoulder/verge)' },
-            { value: 'stop_slow_bats', label: 'STOP/SLOW Bats', sub: 'Traffic controllers with paddle' },
-            { value: 'portable_signals', label: 'Portable Signals', sub: 'Temporary traffic lights' },
+            { value: 'stop_slow_bats', label: 'Traffic Controller', sub: 'STOP/SLOW bat operator' },
+            { value: 'portable_signals', label: 'Traffic Lights', sub: 'Portable signals (PTL)' },
+            { value: 'boom_gate', label: 'Boom Gate', sub: 'Automated barrier' },
+            { value: 'none', label: 'Signs Only', sub: 'No active PTCD' },
             { value: 'pilot_vehicle', label: 'Pilot Vehicle', sub: 'Lead vehicle convoy' },
             { value: 'police', label: 'Police Control', sub: 'Sworn officer direction' },
           ]}
         />
       </Field>
 
-      {(inp.controlMethod === 'stop_slow_bats' || inp.controlMethod === 'portable_signals' || inp.controlMethod === 'police') && (
-        <Field label="Number of Traffic Controllers" half>
+      {(inp.controlMethod === 'stop_slow_bats' || inp.controlMethod === 'police') && (
+        <Field label={inp.controlMethod === 'police' ? 'Number of Officers' : 'Number of Traffic Controllers'} half>
           <NumInput value={inp.numberOfControllers} onChange={v => set('numberOfControllers', v)} min={1} max={20} />
         </Field>
       )}
