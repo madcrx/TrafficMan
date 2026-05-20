@@ -5,10 +5,11 @@ import { AustralianState, WorksType, WorksCategory, WizardInputs, CriteriaCheck 
 // ═══════════════════════════════════════════════════════════════
 
 // ─── Table 2.2 / Sign spacing (advance warning signs) ───────────
+// AS 1742.3:2019 Table 2.2
 export function signSpacing(speedKmh: number, _state?: AustralianState): number {
   if (speedKmh <= 55) return 15;
-  if (speedKmh <= 65) return 45;
-  return speedKmh;
+  if (speedKmh <= 65) return 30;  // 56–65 km/h band = 30 m
+  return speedKmh;                // ≥66 km/h = speed value in metres
 }
 
 // ─── Table 2.3 / Sight distance to traffic control device ──────
@@ -18,10 +19,11 @@ export function sightDistance(speedKmh: number, state?: AustralianState): number
     if (speedKmh <= 60) return 45;
     return speedKmh;
   }
-  if (speedKmh <= 45) return 50;
-  if (speedKmh <= 55) return 70;
-  if (speedKmh <= 65) return 90;
-  return 2 * speedKmh;
+  // AS 1742.3:2019 Table 2.3 — speed bands at 50/60/70 km/h
+  if (speedKmh <= 50) return 50;
+  if (speedKmh <= 60) return 70;
+  if (speedKmh <= 70) return 90;
+  return 2 * speedKmh; // ≥71 km/h
 }
 
 // ─── Table 5.7 / Taper lengths ──────────────────────────────────
@@ -127,10 +129,12 @@ export function recommendedTempSpeed(
 }
 
 // ─── Table 5.5 / Minimum temp speed zone length ────────────────
+// AGTTM Table 5.5 — minimum temp speed zone lengths
 export function minTempZoneLength(tempSpeed: number): number {
   if (tempSpeed <= 40) return 100;
   if (tempSpeed <= 60) return 150;
-  return 500;
+  if (tempSpeed <= 80) return 300;  // 80 km/h → 300 m
+  return 500;                        // 90–110 km/h → 500 m
 }
 
 // ─── Table 5.6 / Speed reduction steps ─────────────────────────
@@ -229,8 +233,8 @@ export function stateStandards(state: AustralianState): {
       };
     case 'VIC':
       return {
-        primary: ['Code of Practice for Worksite Safety — Traffic Management (VicRoads)', 'AGTTM (Austroads)', 'AS 1742.3:2019'],
-        secondary: [],
+        primary: ['Code of Practice for Worksite Safety — Traffic Management (Transport for Victoria / VicRoads)', 'AGTTM (Austroads)', 'AS 1742.3:2019'],
+        secondary: ['Confirm current edition with Department of Transport and Planning (DTP) Victoria'],
       };
     default:
       return {
@@ -924,7 +928,7 @@ export const DESIGN_STEPS: DesignStepDef[] = [
     name: 'STLI In-Lane — Work Protected by Specialist Vehicles',
     category: 'stli',
     subcategory: 'Within Traffic Lane',
-    agttmRef: 'AGTTM Part 5, Section 4.1',
+    agttmRef: 'AGTTM Part 5, Section 3.1',
     description: 'Workers in the traffic lane protected by a specialist vehicle (TMA) positioned between workers and live traffic. No advance warning signs required if TMA used correctly.',
     noSignSchedule: true,
     criteria: [
@@ -966,7 +970,7 @@ export const DESIGN_STEPS: DesignStepDef[] = [
     name: 'STLI In-Lane — Works Between Gaps in Traffic',
     category: 'stli',
     subcategory: 'Within Traffic Lane',
-    agttmRef: 'AGTTM Part 5, Section 4.2',
+    agttmRef: 'AGTTM Part 5, Section 3.2',
     description: 'Short-duration tasks completed during natural gaps in traffic flow. Lookout required. Not recommended on multi-lane roads >100 vph/lane.',
     noSignSchedule: true,
     criteria: [
@@ -1014,7 +1018,7 @@ export const DESIGN_STEPS: DesignStepDef[] = [
     name: 'STLI In-Lane — Short Term Works in Traffic',
     category: 'stli',
     subcategory: 'Within Traffic Lane',
-    agttmRef: 'AGTTM Part 5, Section 4.3',
+    agttmRef: 'AGTTM Part 5, Section 3.3',
     description: 'Works of short planned duration in the traffic lane. Time limits apply based on worker proximity to live traffic.',
     noSignSchedule: true,
     criteria: [
@@ -1064,7 +1068,7 @@ export const DESIGN_STEPS: DesignStepDef[] = [
     name: 'STLI In-Lane — Frequently Changing Work Area',
     category: 'stli',
     subcategory: 'Within Traffic Lane',
-    agttmRef: 'AGTTM Part 5, Section 4.4',
+    agttmRef: 'AGTTM Part 5, Section 3.4',
     description: 'Work area changes frequently within the traffic lane (e.g. line marking, pothole patching moving along road). Time limits per location vary with volume.',
     noSignSchedule: true,
     criteria: [
@@ -1126,7 +1130,7 @@ export const DESIGN_STEPS: DesignStepDef[] = [
     name: 'STLI In-Lane — Constantly Moving Work Area',
     category: 'stli',
     subcategory: 'Within Traffic Lane',
-    agttmRef: 'AGTTM Part 5, Section 4.5',
+    agttmRef: 'AGTTM Part 5, Section 3.5',
     description: 'Plant continuously moving in traffic lane (e.g. road grader, sweeper, inspection vehicle). No stopping. Shadow vehicle required.',
     noSignSchedule: true,
     criteria: [
@@ -1164,7 +1168,7 @@ export const DESIGN_STEPS: DesignStepDef[] = [
     name: 'STLI Outside-Lane — Workers on Foot / Small Plant (Shoulder)',
     category: 'stli',
     subcategory: 'Outside Traffic Lane',
-    agttmRef: 'AGTTM Part 5, Section 5.1',
+    agttmRef: 'AGTTM Part 5, Section 4.1',
     description: 'Workers on foot or with small plant items on shoulder, median, verge or footpath. Traffic passes without lane change.',
     isShoulderOnly: true,
     noSignSchedule: true,
@@ -1222,7 +1226,7 @@ export const DESIGN_STEPS: DesignStepDef[] = [
     name: 'STLI Outside-Lane — Large Plant (Shoulder / Verge)',
     category: 'stli',
     subcategory: 'Outside Traffic Lane',
-    agttmRef: 'AGTTM Part 5, Section 5.2',
+    agttmRef: 'AGTTM Part 5, Section 4.2',
     description: 'Large plant items (graders, rollers, excavators) operating on shoulder, verge or median. Higher risk due to plant overhang and movement.',
     isShoulderOnly: true,
     noSignSchedule: true,
@@ -1284,7 +1288,7 @@ export const DESIGN_STEPS: DesignStepDef[] = [
     name: 'STLI Outside-Lane — Frequently Changing Work Area',
     category: 'stli',
     subcategory: 'Outside Traffic Lane',
-    agttmRef: 'AGTTM Part 5, Section 5.3',
+    agttmRef: 'AGTTM Part 5, Section 4.3',
     description: 'Works outside the traffic lane that change location frequently (e.g. vegetation clearing, inspection walking along road). Maximum 1 hour per location.',
     noSignSchedule: true,
     criteria: [
@@ -1295,14 +1299,14 @@ export const DESIGN_STEPS: DesignStepDef[] = [
       },
       {
         id: 'clearance_1m',
-        criterion: 'Minimum 1.0 m clearance between works/workers and nearest moving lane',
+        criterion: 'Minimum 1.2 m clearance between works/workers and nearest moving lane',
         autoCheck: (inp) => {
           const prox = Math.min(
             inp.workersOnFoot ? inp.workerProximity : 99,
             inp.plantOnSite ? inp.plantProximity : 99,
           );
-          if (prox >= 1.0) return { status: 'pass', detail: `${prox} m ≥ 1.0 m minimum` };
-          return { status: 'fail', detail: `${prox} m < 1.0 m minimum clearance` };
+          if (prox >= 1.2) return { status: 'pass', detail: `${prox} m ≥ 1.2 m minimum` };
+          return { status: 'fail', detail: `${prox} m < 1.2 m minimum clearance` };
         },
       },
       {

@@ -54,9 +54,10 @@ export function calculate(inp: WizardInputs): CalculationResult {
   const minTempLen      = minTempZoneLength(temp);
 
   // ── 4. Taper lengths ────────────────────────────────────────────
+  const laneW = Math.max(inp.laneWidth, 2.5); // guard against 0/invalid entry
   const tapers = taperLengths(temp);
-  const scaledMerge    = scaleTaper(tapers.merge, inp.laneWidth);
-  const scaledLatShift = scaleTaper(tapers.lateralShift, inp.laneWidth);
+  const scaledMerge    = scaleTaper(tapers.merge, laneW);
+  const scaledLatShift = scaleTaper(tapers.lateralShift, laneW);
 
   const primaryTaper = isShoulderOnly
     ? scaledLatShift
@@ -173,9 +174,11 @@ export function calculate(inp: WizardInputs): CalculationResult {
         : isFullClosure
         ? 'ROAD CLOSED AHEAD'
         : 'MERGE (arrow towards open lane)';
+      // W6-4 = LANE CLOSED AHEAD; W6-5 = ROAD CLOSED AHEAD (AS 1742.3)
+      const closedCode = isFullClosure ? 'W6-5' : 'W6-4';
       approachSigns.push({
         sequence: seq++,
-        code: 'W6-4',
+        code: closedCode,
         description: laneClosed,
         distanceFromTaperStart: curPos,
         notes: 'Direct drivers to merge into the open lane',
