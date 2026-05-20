@@ -159,29 +159,27 @@ export function calculate(inp: WizardInputs): CalculationResult {
         curPos -= approachSpacing;
         approachSigns.push({
           sequence: seq++,
-          code: `R4-1(${firstStep.to})-AHEAD`,
-          description: `SPEED ${firstStep.to} AHEAD — advance warning of speed change`,
+          code: 'W5-1',
+          description: `SPEED LIMIT AHEAD — advance warning: ${firstStep.to} km/h zone`,
           distanceFromTaperStart: curPos,
-          notes: `Placed ${approachSpacing} m before speed change sign`,
+          notes: `Placed ${approachSpacing} m before first speed limit sign. W5-1 per AS 1742.3 — warning of upcoming speed reduction to ${firstStep.to} km/h`,
         });
       }
     }
 
-    if (!isShoulderOnly) {
+    // W6-4 (LANE CLOSED AHEAD) applies only to multilane lane reductions.
+    // W6-5 (ROAD CLOSED AHEAD) applies to full closures.
+    // Alternating flow: PREPARE TO STOP + controller sequence already handles guidance — no closure sign.
+    if (!isShoulderOnly && !isAlternating) {
       curPos -= approachSpacing;
-      const laneClosed = isAlternating
-        ? 'LANE CLOSED AHEAD'
-        : isFullClosure
-        ? 'ROAD CLOSED AHEAD'
-        : 'MERGE (arrow towards open lane)';
-      // W6-4 = LANE CLOSED AHEAD; W6-5 = ROAD CLOSED AHEAD (AS 1742.3)
+      const laneClosed = isFullClosure ? 'ROAD CLOSED AHEAD' : 'MERGE (arrow towards open lane)';
       const closedCode = isFullClosure ? 'W6-5' : 'W6-4';
       approachSigns.push({
         sequence: seq++,
         code: closedCode,
         description: laneClosed,
         distanceFromTaperStart: curPos,
-        notes: 'Direct drivers to merge into the open lane',
+        notes: isFullClosure ? 'Road is closed ahead — direct drivers to detour' : 'Direct drivers to merge into the open lane',
       });
     }
 
