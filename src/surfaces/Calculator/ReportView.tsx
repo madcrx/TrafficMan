@@ -2,6 +2,7 @@ import { C } from '../../components/tokens';
 import type { CalculationResult } from './engine';
 import type { WizardInputs } from './types';
 import { WORKS_TYPE_LABELS } from './standards';
+import { TGSSchematic } from './TGSSchematic';
 
 // Injected into <head> for print formatting
 const PRINT_CSS = `
@@ -285,6 +286,19 @@ export function ReportView({ result: r, inputs: inp, onBack }: Props) {
               )}
             </div>
           )}
+        </Section>
+
+        {/* TGS Schematic */}
+        <Section title="Traffic Guidance Scheme — Schematic Layout">
+          <div style={{
+            border: '1px solid var(--border-default)', borderRadius: 8,
+            overflow: 'hidden', background: 'var(--paper-50)',
+          }}>
+            <TGSSchematic result={r} inputs={inp} />
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 6 }}>
+            Schematic representation only — not to scale. All dimensions are calculated values; actual field placement must be verified by a qualified Traffic Management Designer. Refer to sign schedule tables below for precise positions.
+          </div>
         </Section>
 
         {/* Temp speed justification */}
