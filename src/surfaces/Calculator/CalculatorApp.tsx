@@ -10,14 +10,126 @@ import type {
 import { WORKS_TYPE_LABELS, DESIGN_STEPS, suggestStopTime } from './standards';
 import { calculate } from './engine';
 import type { CalculationResult } from './engine';
+import { LocationMap } from './LocationMap';
+import { validateStep } from './validation';
+import type { ValidationErrors } from './validation';
 
 const ReportView = lazy(() => import('./ReportView').then(m => ({ default: m.ReportView })));
 
 const STEP_LABELS = ['Project', 'Road', 'Works', 'Traffic', 'Control'];
 const STATES: AustralianState[] = ['VIC', 'NSW', 'QLD', 'WA', 'SA', 'TAS', 'NT', 'ACT'];
 const SPEEDS = [40, 50, 60, 70, 80, 90, 100, 110];
-const HISTORY_KEY = 'tm-calc-history';
-const HISTORY_MAX = 50;
+const HISTORY_KEY   = 'tm-calc-history';
+const HISTORY_MAX   = 50;
+const TEMPLATES_KEY = 'tm-templates';
+
+// ── Template types ────────────────────────────────────────────────────
+
+interface Template {
+  id: string;
+  name: string;
+  description: string;
+  inputs: Partial<WizardInputs>;
+  builtin?: boolean;
+}
+
+const BUILT_IN_TEMPLATES: Template[] = [
+  {
+    id: 'builtin_lane_closure',
+    name: '2-Lane Road Lane Closure',
+    description: '60 km/h arterial, STOP/SLOW bat control with arrow board',
+    builtin: true,
+    inputs: {
+      classification: 'arterial', postedSpeed: 60, lanesInDirection: 1, laneWidth: 3.5,
+      worksCategory: 'static', worksType: 'past_lane_closure',
+      controlMethod: 'stop_slow_bats', numberOfControllers: 2, arrowBoard: true,
+      peakHourVolume: 600, heavyVehiclePercent: 10,
+    },
+  },
+  {
+    id: 'builtin_shoulder',
+    name: 'Shoulder / Footway Works',
+    description: '80 km/h highway, shoulder works, signs-only control',
+    builtin: true,
+    inputs: {
+      classification: 'highway', postedSpeed: 80, lanesInDirection: 1, laneWidth: 3.5,
+      worksCategory: 'static', worksType: 'past_shoulder',
+      controlMethod: 'none', arrowBoard: true,
+      peakHourVolume: 400, heavyVehiclePercent: 15,
+      workersOnFoot: true, workerProximity: 3,
+    },
+  },
+  {
+    id: 'builtin_mobile',
+    name: 'Mobile Works — Class 1',
+    description: 'Slow-moving plant ≤40 km/h on a collector road',
+    builtin: true,
+    inputs: {
+      classification: 'collector', postedSpeed: 60,
+      worksCategory: 'mobile', worksType: 'mobile_class1',
+      controlMethod: 'none', arrowBoard: false,
+      peakHourVolume: 200, heavyVehiclePercent: 5,
+    },
+  },
+];
+
+function loadTemplates(): Template[] {
+  try {
+    const raw = localStorage.getItem(TEMPLATES_KEY);
+    return raw ? (JSON.parse(raw) as Template[]) : [];
+  } catch { return []; }
+}
+
+function saveTemplates(templates: Template[]): void {
+  try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates)); } catch { /* quota */ }
+}
+
+// ── Overpass road suggestion ───────────────────────────────────────
+
+interface OverpassRoad {
+  name?: string;
+  highway?: string;
+  maxspeed?: string;
+  lanes?: string;
+}
+
+function highwayToClass(hw: string): RoadClassification {
+  if (['motorway', 'motorway_link'].includes(hw)) return 'freeway';
+  if (['trunk', 'primary', 'trunk_link', 'primary_link'].includes(hw)) return 'highway';
+  if (['secondary', 'secondary_link'].includes(hw)) return 'arterial';
+  if (['tertiary', 'tertiary_link'].includes(hw)) return 'collector';
+  return 'local';
+}
+
+function parseMaxspeed(ms: string): number {
+  const n = parseInt(ms, 10);
+  if (!isNaN(n) && n >= 10 && n <= 130) return n;
+  if (ms === 'AU:urban') return 50;
+  if (ms === 'AU:rural') return 100;
+  return 0;
+}
+
+async function queryOverpass(lat: number, lng: number): Promise<OverpassRoad | null> {
+  try {
+    const query = `[out:json][timeout:8];way(around:120,${lat.toFixed(6)},${lng.toFixed(6)})[highway][name];out tags 5;`;
+    const resp = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `data=${encodeURIComponent(query)}`,
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as { elements: Array<{ tags?: Record<string, string> }> };
+    if (!Array.isArray(data.elements) || data.elements.length === 0) return null;
+    const order = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential'];
+    const sorted = [...data.elements].sort((a, b) => {
+      const ai = order.indexOf(a.tags?.highway ?? '');
+      const bi = order.indexOf(b.tags?.highway ?? '');
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+    const tags = sorted[0].tags ?? {};
+    return { name: tags.name, highway: tags.highway, maxspeed: tags.maxspeed, lanes: tags['lanes:forward'] ?? tags.lanes };
+  } catch { return null; }
+}
 
 const defaultInputs: WizardInputs = {
   userRole: 'planner', state: 'VIC',
@@ -353,14 +465,15 @@ type SetFn = <K extends keyof WizardInputs>(k: K, v: WizardInputs[K]) => void;
 const Step1 = memo(function Step1({ inp, set }: { inp: WizardInputs; set: SetFn }) {
   const [geoStatus, setGeoStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
   const [geoDisplay, setGeoDisplay] = useState<string | null>(null);
-  const [geoError, setGeoError] = useState<string | null>(null);
+  const [geoError, setGeoError]     = useState<string | null>(null);
+  const [overpass, setOverpass]     = useState<OverpassRoad | null>(null);
+  const [opLoading, setOpLoading]   = useState(false);
 
+  // Nominatim geocoding (700 ms debounce)
   useEffect(() => {
     const q = inp.location.trim();
     if (q.length < 3) {
-      setGeoStatus('idle');
-      setGeoDisplay(null);
-      setGeoError(null);
+      setGeoStatus('idle'); setGeoDisplay(null); setGeoError(null); setOverpass(null);
       return;
     }
     const controller = new AbortController();
@@ -368,24 +481,19 @@ const Step1 = memo(function Step1({ inp, set }: { inp: WizardInputs; set: SetFn 
     const timer = setTimeout(async () => {
       try {
         const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=au`;
-        const resp = await fetch(url, {
-          signal: controller.signal,
-          headers: { 'Accept': 'application/json' },
-        });
+        const resp = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
         const data = await resp.json() as Array<{ lat: string; lon: string; display_name: string }>;
         if (data.length > 0) {
           const lat = parseFloat(data[0].lat);
           const lng = parseFloat(data[0].lon);
-          set('lat', lat);
-          set('lng', lng);
+          set('lat', lat); set('lng', lng);
           setGeoDisplay(data[0].display_name);
-          setGeoStatus('ok');
-          setGeoError(null);
+          setGeoStatus('ok'); setGeoError(null);
         } else {
-          set('lat', undefined);
-          set('lng', undefined);
+          set('lat', undefined); set('lng', undefined);
           setGeoStatus('error');
           setGeoError('Location not found — try a more specific address or suburb');
+          setOverpass(null);
         }
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
@@ -396,9 +504,35 @@ const Step1 = memo(function Step1({ inp, set }: { inp: WizardInputs; set: SetFn 
     return () => { clearTimeout(timer); controller.abort(); };
   }, [inp.location, set]);
 
-  const mapUrl = inp.lat != null && inp.lng != null
-    ? `https://www.openstreetmap.org/export/embed.html?bbox=${inp.lng - 0.012},${inp.lat - 0.008},${inp.lng + 0.012},${inp.lat + 0.008}&layer=mapnik&marker=${inp.lat},${inp.lng}`
-    : null;
+  // Overpass road query — triggered when lat/lng resolve
+  useEffect(() => {
+    if (inp.lat == null || inp.lng == null) { setOverpass(null); return; }
+    let cancelled = false;
+    setOpLoading(true);
+    queryOverpass(inp.lat, inp.lng).then(road => {
+      if (!cancelled) { setOverpass(road); setOpLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [inp.lat, inp.lng]);
+
+  const applyOverpass = () => {
+    if (!overpass) return;
+    if (overpass.name) set('roadName', overpass.name);
+    if (overpass.highway) set('classification', highwayToClass(overpass.highway));
+    if (overpass.maxspeed) {
+      const spd = parseMaxspeed(overpass.maxspeed);
+      if (spd > 0) set('postedSpeed', spd);
+    }
+    if (overpass.lanes) {
+      const n = parseInt(overpass.lanes, 10);
+      if (!isNaN(n) && n >= 1 && n <= 4) set('lanesInDirection', n);
+    }
+    setOverpass(null);
+  };
+
+  const handleMarkerDrag = ({ lat, lng }: { lat: number; lng: number }) => {
+    set('lat', lat); set('lng', lng);
+  };
 
   return (
     <>
@@ -454,20 +588,14 @@ const Step1 = memo(function Step1({ inp, set }: { inp: WizardInputs; set: SetFn 
         </Field>
       </RowPair>
 
-      <Field label="Location / Address" hint="Australian address or suburb — geocoded automatically">
+      <Field label="Location / Address" hint="Australian address or suburb — geocoded automatically. Drag the map pin to adjust the exact position.">
         <div style={{ position: 'relative' }}>
           <TextInput value={inp.location} onChange={v => set('location', v)} placeholder="e.g. 123 Smith Street, Melbourne VIC" />
           {geoStatus === 'loading' && (
-            <div aria-hidden="true" style={{
-              position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-              fontSize: 12, color: 'var(--fg-subtle)',
-            }}>⏳</div>
+            <div aria-hidden="true" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: 'var(--fg-subtle)' }}>⏳</div>
           )}
           {geoStatus === 'ok' && (
-            <div aria-hidden="true" style={{
-              position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-              fontSize: 14, color: '#28A745',
-            }}>✓</div>
+            <div aria-hidden="true" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: '#28A745' }}>✓</div>
           )}
         </div>
       </Field>
@@ -475,41 +603,56 @@ const Step1 = memo(function Step1({ inp, set }: { inp: WizardInputs; set: SetFn 
       {geoStatus === 'error' && geoError && (
         <div role="alert" style={{
           marginTop: -12, marginBottom: 16, padding: '6px 12px', borderRadius: 6,
-          background: '#FFF5F5', border: '1px solid #F5C6CB',
-          fontSize: 12, color: '#721C24',
+          background: '#FFF5F5', border: '1px solid #F5C6CB', fontSize: 12, color: '#721C24',
         }}>{geoError}</div>
       )}
 
       {geoStatus === 'ok' && inp.lat != null && inp.lng != null && (
         <div style={{ marginBottom: 20 }}>
-          <div style={{
-            display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8, flexWrap: 'wrap',
-          }}>
-            <span style={{ fontSize: 12, color: 'var(--fg-subtle)', flex: 1, lineHeight: 1.4 }}>
-              {geoDisplay}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--fg-subtle)', flex: 1, lineHeight: 1.4 }}>{geoDisplay}</span>
             <span style={{
-              fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700,
-              color: C.hivis, flexShrink: 0,
+              fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: C.hivis, flexShrink: 0,
               background: '#FFF3E9', padding: '3px 10px', borderRadius: 6,
             }}>
               {inp.lat.toFixed(5)}°, {inp.lng.toFixed(5)}°
             </span>
           </div>
-          <iframe
-            src={mapUrl!}
-            title="Location map preview"
-            width="100%"
-            height="220"
-            loading="lazy"
-            style={{
-              border: '1.5px solid var(--border-default)', borderRadius: 10,
-              display: 'block',
-            }}
-          />
+
+          <LocationMap lat={inp.lat} lng={inp.lng} onDragEnd={handleMarkerDrag} />
+
           <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 5 }}>
-            Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>OpenStreetMap</a> contributors
+            Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>OpenStreetMap</a> contributors · Drag the pin to refine position
           </div>
+
+          {/* Overpass road suggestion */}
+          {opLoading && (
+            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'var(--paper-50)', border: '1px solid var(--border-default)', fontSize: 12, color: 'var(--fg-subtle)' }}>
+              Looking up road data…
+            </div>
+          )}
+          {!opLoading && overpass && (
+            <div style={{
+              marginTop: 10, padding: '12px 14px', borderRadius: 8,
+              background: '#E5F1FF', border: '1.5px solid #0A84FF',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+            }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#0A84FF', marginBottom: 2 }}>Road data found from OpenStreetMap</div>
+                <div style={{ fontSize: 12, color: 'var(--fg-default)' }}>
+                  {[overpass.name, overpass.highway, overpass.maxspeed && `${overpass.maxspeed} km/h`, overpass.lanes && `${overpass.lanes} lanes`].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              <button
+                onClick={applyOverpass}
+                style={{
+                  padding: '7px 16px', borderRadius: 7, border: 'none',
+                  background: '#0A84FF', color: '#fff',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
+                }}
+              >Apply to Road Details →</button>
+            </div>
+          )}
         </div>
       )}
     </>
@@ -1095,6 +1238,125 @@ function HistoryPanel({ history, onLoad, onClose, onExport, onImport }: {
   );
 }
 
+// ── Templates panel ───────────────────────────────────────────────
+
+function TemplatesPanel({ onLoad, onClose, onSaveCurrent, currentInputs }: {
+  onLoad: (tpl: Template) => void;
+  onClose: () => void;
+  onSaveCurrent: (name: string, description: string) => void;
+  currentInputs: WizardInputs;
+}) {
+  const panelRef  = useRef<HTMLDivElement>(null);
+  const [userTemplates, setUserTemplates] = useState<Template[]>(loadTemplates);
+  const [showSave, setShowSave] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saveDesc, setSaveDesc] = useState('');
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Tab') return;
+      const els = panelRef.current?.querySelectorAll<HTMLElement>(
+        'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'
+      );
+      if (!els || els.length === 0) return;
+      const first = els[0], last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) { last.focus(); e.preventDefault(); }
+      else if (!e.shiftKey && document.activeElement === last) { first.focus(); e.preventDefault(); }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const deleteTemplate = (id: string) => {
+    const next = userTemplates.filter(t => t.id !== id);
+    setUserTemplates(next);
+    saveTemplates(next);
+  };
+
+  const handleSave = () => {
+    if (!saveName.trim()) return;
+    const tpl: Template = {
+      id: `user_${Date.now()}`,
+      name: saveName.trim(),
+      description: saveDesc.trim() || `${currentInputs.state} · ${currentInputs.postedSpeed} km/h · ${currentInputs.classification}`,
+      inputs: { ...currentInputs },
+    };
+    const next = [...userTemplates, tpl];
+    setUserTemplates(next);
+    saveTemplates(next);
+    onSaveCurrent(tpl.name, tpl.description);
+    setShowSave(false); setSaveName(''); setSaveDesc('');
+  };
+
+  const allTemplates = [...BUILT_IN_TEMPLATES, ...userTemplates];
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex' }}>
+      <div onClick={onClose} aria-hidden="true" style={{ flex: 1, background: 'rgba(0,0,0,0.4)' }} />
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="tpl-panel-title"
+        style={{ width: 420, background: 'var(--bg-surface)', boxShadow: '-4px 0 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-default)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div>
+              <div id="tpl-panel-title" style={{ fontSize: 16, fontWeight: 700 }}>Plan Templates</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 2 }}>
+                Built-in and your saved templates
+              </div>
+            </div>
+            <button onClick={onClose} aria-label="Close templates panel"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--fg-subtle)', padding: '4px 8px' }}>×</button>
+          </div>
+          <button onClick={() => setShowSave(s => !s)} style={{
+            width: '100%', padding: '8px', borderRadius: 7,
+            border: `1.5px solid ${C.hivis}`, background: showSave ? '#FFF3E9' : 'var(--bg-surface)',
+            color: C.hivis, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            {showSave ? '▲ Cancel' : '＋ Save Current Inputs as Template'}
+          </button>
+          {showSave && (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="Template name (required)"
+                style={{ ...inputBase, fontSize: 13 }} aria-label="Template name" />
+              <input value={saveDesc} onChange={e => setSaveDesc(e.target.value)} placeholder="Description (optional)"
+                style={{ ...inputBase, fontSize: 13 }} aria-label="Template description" />
+              <button onClick={handleSave} disabled={!saveName.trim()} style={{
+                padding: '8px', borderRadius: 7, border: 'none',
+                background: saveName.trim() ? C.hivis : 'var(--border-default)',
+                color: saveName.trim() ? C.ink900 : 'var(--fg-subtle)',
+                fontSize: 12, fontWeight: 700, cursor: saveName.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit',
+              }}>Save Template</button>
+            </div>
+          )}
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+          {allTemplates.map(tpl => (
+            <div key={tpl.id} style={{ border: '1px solid var(--border-default)', borderRadius: 10, padding: '14px 16px', marginBottom: 12, background: 'var(--bg-app)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{tpl.name}</div>
+                {tpl.builtin && <span style={{ fontSize: 10, background: '#E5F1FF', color: '#0A84FF', padding: '2px 8px', borderRadius: 10, fontWeight: 700, flexShrink: 0 }}>Built-in</span>}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginBottom: 10 }}>{tpl.description}</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => { onLoad(tpl); onClose(); }} style={{
+                  flex: 1, padding: '7px', borderRadius: 6, border: 'none',
+                  background: C.hivis, color: C.ink900, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                }}>Load Template →</button>
+                {!tpl.builtin && (
+                  <button onClick={() => deleteTemplate(tpl.id)} aria-label={`Delete ${tpl.name}`} style={{
+                    padding: '7px 12px', borderRadius: 6, border: '1.5px solid var(--border-default)',
+                    background: 'var(--bg-surface)', color: 'var(--fg-subtle)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>✕</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────
 
 export function CalculatorApp() {
@@ -1104,7 +1366,9 @@ export function CalculatorApp() {
   const [result, setResult] = useState<CalculationResult | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [showHistory, setShowHistory] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
   const historyIdRef = useRef(history.length > 0 ? Math.max(...history.map(h => h.id)) : 0);
 
   // Persist history to localStorage whenever it changes
@@ -1120,6 +1384,7 @@ export function CalculatorApp() {
     setStep(1);
     setMaxStep(1);
     setResult(null);
+    setValidationErrors({});
   }, [inp.projectName, inp.roadName, inp.location, result]);
 
   const handleCalculate = useCallback(() => {
@@ -1172,6 +1437,9 @@ export function CalculatorApp() {
   }
 
   const goNext = () => {
+    const errors = validateStep(step, inp);
+    setValidationErrors(errors);
+    if (Object.keys(errors).length > 0) return;
     if (step < 5) {
       const next = step + 1;
       setStep(next);
@@ -1180,8 +1448,12 @@ export function CalculatorApp() {
       handleCalculate();
     }
   };
-  const goBack = () => { if (step > 1) setStep(s => s - 1); };
-  const jumpTo = (n: number) => { if (n <= maxStep) setStep(n); };
+  const goBack = () => { if (step > 1) { setValidationErrors({}); setStep(s => s - 1); } };
+  const jumpTo = (n: number) => { if (n <= maxStep) { setValidationErrors({}); setStep(n); } };
+  const loadTemplate = (tpl: Template) => {
+    setInp(prev => ({ ...prev, ...tpl.inputs }));
+    setValidationErrors({});
+  };
 
   const renderStep = () => {
     switch (step) {
@@ -1265,6 +1537,19 @@ export function CalculatorApp() {
             <span>New</span>
           </button>
 
+          <button onClick={() => setShowTemplates(true)}
+            aria-label="Plan templates"
+            title="Load a plan template"
+            style={{
+              padding: '8px 14px', borderRadius: 8, border: '1.5px solid var(--border-default)',
+              background: 'var(--bg-surface)', color: 'var(--fg-default)',
+              fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+            }}>
+            <span aria-hidden="true">📐</span>
+            <span>Templates</span>
+          </button>
+
           <button onClick={() => setShowHistory(true)}
             aria-label={`Calculation history — ${history.length} saved`}
             style={{
@@ -1291,6 +1576,25 @@ export function CalculatorApp() {
           {renderStep()}
         </div>
       </div>
+
+      {/* Validation error summary */}
+      {Object.keys(validationErrors).length > 0 && (
+        <div role="alert" style={{
+          background: '#FFF5F5', borderTop: '1px solid #F5C6CB',
+          padding: '10px 24px', flexShrink: 0,
+        }}>
+          <div style={{ maxWidth: 720, margin: '0 auto' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#721C24', marginBottom: 4 }}>
+              Please fix these issues before continuing:
+            </div>
+            {Object.entries(validationErrors).map(([field, msg]) => (
+              <div key={field} style={{ fontSize: 12, color: '#721C24', marginBottom: 2 }}>
+                · {msg}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Navigation footer */}
       <div style={{
@@ -1339,6 +1643,15 @@ export function CalculatorApp() {
               return [...prev, ...newEntries].slice(-HISTORY_MAX);
             });
           }}
+        />
+      )}
+
+      {showTemplates && (
+        <TemplatesPanel
+          onLoad={loadTemplate}
+          onClose={() => setShowTemplates(false)}
+          onSaveCurrent={() => {}}
+          currentInputs={inp}
         />
       )}
     </div>

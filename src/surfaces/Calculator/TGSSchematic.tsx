@@ -1,3 +1,4 @@
+import { useState, useRef, useCallback } from 'react';
 import type { CalculationResult } from './engine';
 import type { WizardInputs } from './types';
 import { getDesignStep } from './standards';
@@ -108,11 +109,80 @@ function ZoneLabel({ x1, x2, y, label, color = C_ZONE_LBL }: {
   );
 }
 
+// ── PNG export helper ────────────────────────────────────────────────
+
+async function exportSvgAsPng(svgEl: SVGSVGElement, filename: string) {
+  const serializer = new XMLSerializer();
+  const svgStr = serializer.serializeToString(svgEl);
+  const canvas = document.createElement('canvas');
+  const scale = 2;
+  canvas.width  = SVG_W * scale;
+  canvas.height = SVG_H * scale;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const img = new Image();
+  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(b => {
+        if (!b) { reject(new Error('canvas.toBlob failed')); return; }
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(b);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        resolve();
+      }, 'image/png');
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 // ── Main component ──────────────────────────────────────────────────
 
 interface Props { result: CalculationResult; inputs: WizardInputs }
 
 export function TGSSchematic({ result: r, inputs: inp }: Props) {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan]   = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragOrigin = useRef({ mx: 0, my: 0, px: 0, py: 0 });
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const clampZoom = (z: number) => Math.min(3, Math.max(0.5, z));
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    setZoom(z => clampZoom(z - e.deltaY * 0.001));
+  }, []);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setDragging(true);
+    dragOrigin.current = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y };
+  };
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!dragging) return;
+    const { mx, my, px, py } = dragOrigin.current;
+    setPan({ x: px + (e.clientX - mx), y: py + (e.clientY - my) });
+  };
+  const stopDrag = () => setDragging(false);
+
+  const handleExportPng = async () => {
+    if (!svgRef.current) return;
+    const name = `TGS-${inp.projectName || 'schematic'}-${inp.date}.png`.replace(/[^a-z0-9.\-_]/gi, '_');
+    await exportSvgAsPng(svgRef.current, name);
+  };
+
+  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+
   const stepDef = getDesignStep(inp.worksType);
   const isAlternating = stepDef?.isAlternating ?? false;
   const isFullClosure = stepDef?.isFullClosure ?? false;
@@ -191,9 +261,47 @@ export function TGSSchematic({ result: r, inputs: inp }: Props) {
   const taperCones = Math.min(8, Math.ceil(TAPER_PX / 12));
   const bufferCones = Math.min(6, Math.ceil(BUFFER_PX / 10));
 
+  const btnStyle: React.CSSProperties = {
+    padding: '5px 12px', borderRadius: 6, border: '1.5px solid var(--border-default)',
+    background: 'var(--bg-surface)', color: 'var(--fg-default)',
+    fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+    display: 'flex', alignItems: 'center', gap: 5,
+  };
+
   return (
-    <div style={{ overflowX: 'auto', fontFamily: 'var(--font-ui)' }}>
+    <div style={{ fontFamily: 'var(--font-ui)' }}>
+      {/* Control bar */}
+      <div className="no-print" style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+        borderBottom: '1px solid var(--border-default)', background: 'var(--paper-50)',
+        flexWrap: 'wrap',
+      }}>
+        <button style={btnStyle} onClick={() => setZoom(z => clampZoom(z + 0.2))} aria-label="Zoom in">＋ Zoom In</button>
+        <button style={btnStyle} onClick={() => setZoom(z => clampZoom(z - 0.2))} aria-label="Zoom out">－ Zoom Out</button>
+        <button style={btnStyle} onClick={resetView} aria-label="Reset view">↺ Reset</button>
+        <span style={{ fontSize: 11, color: 'var(--fg-subtle)', marginLeft: 2 }}>{Math.round(zoom * 100)}% · Drag to pan · Scroll to zoom</span>
+        <div style={{ flex: 1 }} />
+        <button style={{ ...btnStyle, borderColor: '#0A84FF', color: '#0A84FF' }}
+          onClick={handleExportPng} aria-label="Export PNG">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Export PNG
+        </button>
+      </div>
+
+      {/* Zoomable/pannable canvas */}
+      <div
+        style={{ overflow: 'hidden', cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none', background: 'var(--paper-50)' }}
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={stopDrag}
+        onMouseLeave={stopDrag}
+      >
+        <div style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0', transition: dragging ? 'none' : 'transform 0.1s' }}>
       <svg
+        ref={svgRef}
         viewBox={`0 0 ${SVG_W} ${SVG_H}`}
         width="100%"
         style={{ display: 'block', maxWidth: SVG_W, minWidth: 600 }}
@@ -482,6 +590,8 @@ export function TGSSchematic({ result: r, inputs: inp }: Props) {
         </text>
 
       </svg>
+        </div>
+      </div>
     </div>
   );
 }

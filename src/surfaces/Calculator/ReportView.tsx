@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { C } from '../../components/tokens';
 import type { CalculationResult } from './engine';
 import type { WizardInputs } from './types';
@@ -174,6 +175,8 @@ function CriteriaBadge({ status }: { status: 'pass' | 'fail' | 'check' }) {
 }
 
 export function ReportView({ result: r, inputs: inp, onBack, onNew, history = [], onLoadHistory }: Props) {
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+
   const handlePrint = () => {
     const existing = document.getElementById('tm-print-css');
     if (!existing) {
@@ -183,6 +186,31 @@ export function ReportView({ result: r, inputs: inp, onBack, onNew, history = []
       document.head.appendChild(style);
     }
     window.print();
+  };
+
+  const handleDownloadPDF = async () => {
+    setPdfGenerating(true);
+    try {
+      const [{ pdf }, { TMPDocument }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('./TMPDocument'),
+      ]);
+      const element = TMPDocument({ result: r, inputs: inp });
+      const blob = await pdf(element as Parameters<typeof pdf>[0]).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(inp.projectName || 'TMP').replace(/[^a-z0-9]/gi, '_')}-${inp.date}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+      alert('PDF generation failed — try Print / Save PDF instead.');
+    } finally {
+      setPdfGenerating(false);
+    }
   };
 
   const dr = (ref: string) => distRef(ref, inp.state);
@@ -270,17 +298,30 @@ export function ReportView({ result: r, inputs: inp, onBack, onNew, history = []
 
         <div style={{ flex: 1 }}/>
 
-        <button onClick={handlePrint} style={{
-          padding: '9px 24px', borderRadius: 8, border: 'none',
+        <button onClick={handleDownloadPDF} disabled={pdfGenerating} style={{
+          padding: '9px 20px', borderRadius: 8, border: 'none',
           background: C.hivis, color: C.ink900,
+          fontSize: 14, fontWeight: 700, cursor: pdfGenerating ? 'wait' : 'pointer',
+          fontFamily: 'inherit', opacity: pdfGenerating ? 0.7 : 1,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          {pdfGenerating ? 'Generating…' : 'Download PDF'}
+        </button>
+
+        <button onClick={handlePrint} style={{
+          padding: '9px 16px', borderRadius: 8, border: '1.5px solid var(--border-default)',
+          background: 'var(--bg-surface)', color: 'var(--fg-default)',
           fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
           display: 'flex', alignItems: 'center', gap: 8,
         }}>
-          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
             <rect x="6" y="14" width="12" height="8"/>
           </svg>
-          Print / Save PDF
+          Print
         </button>
       </div>
 
