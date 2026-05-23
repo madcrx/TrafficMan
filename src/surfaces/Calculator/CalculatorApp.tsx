@@ -1113,6 +1113,15 @@ export function CalculatorApp() {
   const set = useCallback(<K extends keyof WizardInputs>(k: K, v: WizardInputs[K]) =>
     setInp(prev => ({ ...prev, [k]: v })), []);
 
+  const handleNew = useCallback(() => {
+    const hasData = inp.projectName || inp.roadName || inp.location || result !== null;
+    if (hasData && !window.confirm('Start a new calculation? All current entries will be cleared.')) return;
+    setInp({ ...defaultInputs, date: new Date().toISOString().split('T')[0] });
+    setStep(1);
+    setMaxStep(1);
+    setResult(null);
+  }, [inp.projectName, inp.roadName, inp.location, result]);
+
   const handleCalculate = useCallback(() => {
     setCalculating(true);
     // requestAnimationFrame flush ensures the disabled state renders before the sync calculation
@@ -1138,6 +1147,7 @@ export function CalculatorApp() {
             result={result}
             inputs={inp}
             onBack={() => setResult(null)}
+            onNew={handleNew}
             history={history}
             onLoadHistory={(entry) => { setInp(entry.inputs); setResult(entry.result); }}
           />
@@ -1241,6 +1251,19 @@ export function CalculatorApp() {
               );
             })}
           </nav>
+
+          <button onClick={handleNew}
+            aria-label="Start a new calculation"
+            title="Clear all entries and start fresh"
+            style={{
+              padding: '8px 14px', borderRadius: 8, border: '1.5px solid var(--border-default)',
+              background: 'var(--bg-surface)', color: 'var(--fg-default)',
+              fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+            }}>
+            <span aria-hidden="true">＋</span>
+            <span>New</span>
+          </button>
 
           <button onClick={() => setShowHistory(true)}
             aria-label={`Calculation history — ${history.length} saved`}
