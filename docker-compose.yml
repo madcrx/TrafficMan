@@ -1,0 +1,30 @@
+services:
+  trafficman:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "3001:3001"
+    volumes:
+      - trafficman_data:/data
+    environment:
+      PORT: "3001"
+      NODE_ENV: production
+      SERVE_STATIC: "true"
+      STATIC_DIR: /srv/public
+      DATA_DIR: /data
+      QUEUE_ENGINE_URL: http://queue-engine:8000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    depends_on:
+      - queue-engine
+    restart: unless-stopped
+
+  queue-engine:
+    build:
+      context: ./queue-engine
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  trafficman_data:
