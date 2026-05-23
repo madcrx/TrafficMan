@@ -110,6 +110,15 @@ export interface WizardInputs {
   maxStopTime: number;  // minutes — 0 = auto-estimate from zone length
 }
 
+// ─── Multi-zone project ────────────────────────────────────────
+
+export interface Zone {
+  id: number;
+  name: string;
+  inputs: WizardInputs;
+  result: CalculationResult;
+}
+
 // ─── Output types ──────────────────────────────────────────────
 
 export interface SignItem {

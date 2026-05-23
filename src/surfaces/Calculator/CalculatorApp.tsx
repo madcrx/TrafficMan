@@ -5,7 +5,7 @@ import {
 import { C } from '../../components/tokens';
 import type {
   WizardInputs, AustralianState, RoadClassification, WorksType, WorksCategory,
-  ControlMethod, RoadGeometry, WeatherCondition,
+  ControlMethod, RoadGeometry, WeatherCondition, Zone,
 } from './types';
 import { WORKS_TYPE_LABELS, DESIGN_STEPS, suggestStopTime } from './standards';
 import { calculate } from './engine';
@@ -13,6 +13,8 @@ import type { CalculationResult } from './engine';
 import { LocationMap } from './LocationMap';
 import { validateStep } from './validation';
 import type { ValidationErrors } from './validation';
+import { loadShare } from './shareApi';
+import { AISuggestion } from './AISuggestion';
 
 const ReportView = lazy(() => import('./ReportView').then(m => ({ default: m.ReportView })));
 
@@ -770,9 +772,17 @@ const Step3 = memo(function Step3({ inp, set }: { inp: WizardInputs; set: SetFn 
   return (
     <>
       <h2 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 700 }}>Works Details</h2>
-      <p style={{ margin: '0 0 28px', color: 'var(--fg-subtle)', fontSize: 14 }}>
+      <p style={{ margin: '0 0 20px', color: 'var(--fg-subtle)', fontSize: 14 }}>
         Select the AGTTM design step that best matches your worksite.
       </p>
+
+      <AISuggestion
+        inputs={inp}
+        onApply={(worksType, worksCategory) => {
+          set('worksType', worksType);
+          set('worksCategory', worksCategory);
+        }}
+      />
 
       <Field label="Works Category">
         <div role="group" aria-label="Works category" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
@@ -1369,7 +1379,45 @@ export function CalculatorApp() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [activeZoneId, setActiveZoneId] = useState<number | null>(null);
+  const zoneIdRef = useRef(0);
+  const [shareLoading, setShareLoading] = useState(
+    () => new URLSearchParams(window.location.search).has('share')
+  );
+  const [shareError, setShareError] = useState('');
   const historyIdRef = useRef(history.length > 0 ? Math.max(...history.map(h => h.id)) : 0);
+
+  // Resolve share token from URL on first load
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('share');
+    if (!token) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    loadShare(token)
+      .then(payload => {
+        if (Array.isArray((payload as unknown as { zones: Zone[] }).zones)) {
+          // Multi-zone share
+          const shared = (payload as unknown as { zones: Zone[] }).zones;
+          setZones(shared);
+          zoneIdRef.current = shared.reduce((m, z) => Math.max(m, z.id), 0);
+          const first = shared[0];
+          setInp(first.inputs);
+          setResult(first.result);
+          setActiveZoneId(first.id);
+        } else {
+          // Legacy single-zone share
+          const inputs = payload as WizardInputs;
+          const r = calculate(inputs);
+          const id = ++zoneIdRef.current;
+          setZones([{ id, name: 'Zone 1', inputs, result: r }]);
+          setActiveZoneId(id);
+          setInp(inputs);
+          setResult(r);
+        }
+      })
+      .catch(() => setShareError('This share link has expired or is invalid.'))
+      .finally(() => setShareLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist history to localStorage whenever it changes
   useEffect(() => { saveHistory(history); }, [history]);
@@ -1378,18 +1426,20 @@ export function CalculatorApp() {
     setInp(prev => ({ ...prev, [k]: v })), []);
 
   const handleNew = useCallback(() => {
-    const hasData = inp.projectName || inp.roadName || inp.location || result !== null;
-    if (hasData && !window.confirm('Start a new calculation? All current entries will be cleared.')) return;
+    const hasData = inp.projectName || inp.roadName || inp.location || result !== null || zones.length > 0;
+    if (hasData && !window.confirm('Start a new project? All current zones will be cleared.')) return;
     setInp({ ...defaultInputs, date: new Date().toISOString().split('T')[0] });
+    setZones([]);
+    setActiveZoneId(null);
+    zoneIdRef.current = 0;
     setStep(1);
     setMaxStep(1);
     setResult(null);
     setValidationErrors({});
-  }, [inp.projectName, inp.roadName, inp.location, result]);
+  }, [inp.projectName, inp.roadName, inp.location, result, zones.length]);
 
   const handleCalculate = useCallback(() => {
     setCalculating(true);
-    // requestAnimationFrame flush ensures the disabled state renders before the sync calculation
     requestAnimationFrame(() => {
       const r = calculate(inp);
       const entry: HistoryEntry = {
@@ -1399,10 +1449,92 @@ export function CalculatorApp() {
         result: r,
       };
       setHistory(prev => [...prev, entry].slice(-HISTORY_MAX));
+
+      setZones(prev => {
+        if (activeZoneId !== null) {
+          return prev.map(z => z.id === activeZoneId ? { ...z, inputs: { ...inp }, result: r } : z);
+        }
+        const id = ++zoneIdRef.current;
+        const name = `Zone ${prev.length + 1}`;
+        setActiveZoneId(id);
+        return [...prev, { id, name, inputs: { ...inp }, result: r }];
+      });
+
       setResult(r);
       setCalculating(false);
     });
-  }, [inp]);
+  }, [inp, activeZoneId]);
+
+  const handleAddZone = useCallback(() => {
+    // Carry project-level fields into the new zone's defaults
+    setInp(prev => ({
+      ...defaultInputs,
+      date: new Date().toISOString().split('T')[0],
+      userRole: prev.userRole,
+      state: prev.state,
+      projectName: prev.projectName,
+      projectRef: prev.projectRef,
+      preparedBy: prev.preparedBy,
+    }));
+    setActiveZoneId(null);
+    setStep(1);
+    setMaxStep(1);
+    setResult(null);
+    setValidationErrors({});
+  }, []);
+
+  const handleSwitchZone = useCallback((zone: Zone) => {
+    setInp(zone.inputs);
+    setResult(zone.result);
+    setActiveZoneId(zone.id);
+    setStep(1);
+    setMaxStep(5);
+    setValidationErrors({});
+  }, []);
+
+  const handleRenameZone = useCallback((id: number, name: string) => {
+    setZones(prev => prev.map(z => z.id === id ? { ...z, name } : z));
+  }, []);
+
+  const handleDeleteZone = useCallback((id: number) => {
+    setZones(prev => {
+      const next = prev.filter(z => z.id !== id);
+      if (next.length === 0) {
+        setResult(null);
+        setActiveZoneId(null);
+        setInp({ ...defaultInputs, date: new Date().toISOString().split('T')[0] });
+        setStep(1); setMaxStep(1);
+      } else if (id === activeZoneId) {
+        const fallback = next[next.length - 1];
+        setInp(fallback.inputs);
+        setResult(fallback.result);
+        setActiveZoneId(fallback.id);
+      }
+      return next;
+    });
+  }, [activeZoneId]);
+
+  if (shareLoading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: 16, fontFamily: 'var(--font-ui)', color: 'var(--fg-default)' }}>
+        <div style={{ fontSize: 18, fontWeight: 700 }}>Loading shared project…</div>
+        <div style={{ fontSize: 14, color: 'var(--fg-subtle)' }}>Fetching calculation from share link</div>
+      </div>
+    );
+  }
+
+  if (shareError) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: 16, fontFamily: 'var(--font-ui)', color: 'var(--fg-default)' }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: '#DC3545' }}>Share link invalid</div>
+        <div style={{ fontSize: 14, color: 'var(--fg-subtle)' }}>{shareError}</div>
+        <button
+          onClick={() => setShareError('')}
+          style={{ marginTop: 8, padding: '10px 24px', borderRadius: 8, border: 'none', background: C.hivis, color: C.ink900, fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+        >Start new calculation</button>
+      </div>
+    );
+  }
 
   if (result) {
     return (
@@ -1415,6 +1547,12 @@ export function CalculatorApp() {
             onNew={handleNew}
             history={history}
             onLoadHistory={(entry) => { setInp(entry.inputs); setResult(entry.result); }}
+            zones={zones}
+            activeZoneId={activeZoneId}
+            onAddZone={handleAddZone}
+            onSwitchZone={handleSwitchZone}
+            onRenameZone={handleRenameZone}
+            onDeleteZone={handleDeleteZone}
           />
         </Suspense>
         {showHistory && (

@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { C } from '../../components/tokens';
+import { createShare } from './shareApi';
 import type { CalculationResult } from './engine';
-import type { WizardInputs } from './types';
+import type { WizardInputs, Zone } from './types';
 import { WORKS_TYPE_LABELS } from './standards';
 import { TGSSchematic } from './TGSSchematic';
+import { QueueAnalysis } from './QueueAnalysis';
+import { FieldView } from './FieldView';
 import type { HistoryEntry } from './CalculatorApp';
 
 const PRINT_CSS = `
@@ -30,6 +33,12 @@ interface Props {
   onNew?: () => void;
   history?: HistoryEntry[];
   onLoadHistory?: (entry: HistoryEntry) => void;
+  zones?: Zone[];
+  activeZoneId?: number | null;
+  onAddZone?: () => void;
+  onSwitchZone?: (zone: Zone) => void;
+  onRenameZone?: (id: number, name: string) => void;
+  onDeleteZone?: (id: number) => void;
 }
 
 function MetricCard({ label, value, unit, color = C.hivis }: {
@@ -174,8 +183,27 @@ function CriteriaBadge({ status }: { status: 'pass' | 'fail' | 'check' }) {
   );
 }
 
-export function ReportView({ result: r, inputs: inp, onBack, onNew, history = [], onLoadHistory }: Props) {
+type ShareState = 'idle' | 'sharing' | 'copied' | 'error';
+
+export function ReportView({ result: r, inputs: inp, onBack, onNew, history = [], onLoadHistory, zones = [], activeZoneId, onAddZone, onSwitchZone, onRenameZone, onDeleteZone }: Props) {
   const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [shareState, setShareState] = useState<ShareState>('idle');
+  const [showSummary, setShowSummary] = useState(false);
+  const [showFieldView, setShowFieldView] = useState(false);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const handleShare = async () => {
+    setShareState('sharing');
+    try {
+      const url = await createShare(inp, zones);
+      await navigator.clipboard.writeText(url);
+      setShareState('copied');
+    } catch {
+      setShareState('error');
+    }
+    setTimeout(() => setShareState('idle'), 3000);
+  };
 
   const handlePrint = () => {
     const existing = document.getElementById('tm-print-css');
@@ -269,7 +297,15 @@ export function ReportView({ result: r, inputs: inp, onBack, onNew, history = []
             padding: '9px 20px', borderRadius: 8, border: '1.5px solid var(--border-default)',
             background: 'var(--bg-surface)', color: 'var(--fg-default)',
             fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-          }}>+ New Calculation</button>
+          }}>+ New Project</button>
+        )}
+
+        {onAddZone && (
+          <button onClick={onAddZone} style={{
+            padding: '9px 20px', borderRadius: 8, border: '1.5px solid var(--border-default)',
+            background: 'var(--bg-surface)', color: 'var(--fg-default)',
+            fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+          }}>+ Add Zone</button>
         )}
 
         {history.length > 0 && onLoadHistory && (
@@ -298,6 +334,35 @@ export function ReportView({ result: r, inputs: inp, onBack, onNew, history = []
 
         <div style={{ flex: 1 }}/>
 
+        <button
+          onClick={handleShare}
+          disabled={shareState === 'sharing'}
+          style={{
+            padding: '9px 20px', borderRadius: 8,
+            border: `1.5px solid ${shareState === 'copied' ? '#28A745' : shareState === 'error' ? '#DC3545' : 'var(--border-default)'}`,
+            background: shareState === 'copied' ? '#D4EDDA' : shareState === 'error' ? '#F8D7DA' : 'var(--bg-surface)',
+            color: shareState === 'copied' ? '#155724' : shareState === 'error' ? '#721C24' : 'var(--fg-default)',
+            fontSize: 14, fontWeight: 700, cursor: shareState === 'sharing' ? 'wait' : 'pointer',
+            fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 8,
+          }}
+        >
+          {shareState === 'sharing' ? (
+            '…'
+          ) : shareState === 'copied' ? (
+            '✓ Link copied'
+          ) : shareState === 'error' ? (
+            '✗ Share failed'
+          ) : (
+            <>
+              <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+              </svg>
+              Share
+            </>
+          )}
+        </button>
+
         <button onClick={handleDownloadPDF} disabled={pdfGenerating} style={{
           padding: '9px 20px', borderRadius: 8, border: 'none',
           background: C.hivis, color: C.ink900,
@@ -323,10 +388,109 @@ export function ReportView({ result: r, inputs: inp, onBack, onNew, history = []
           </svg>
           Print
         </button>
+
+        <button onClick={() => setShowFieldView(true)} style={{
+          padding: '9px 16px', borderRadius: 8, border: '1.5px solid var(--border-default)',
+          background: 'var(--bg-surface)', color: 'var(--fg-default)',
+          fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          📱 Field View
+        </button>
       </div>
 
+      {/* Zone strip — shown when 2+ zones exist */}
+      {zones.length > 1 && (
+        <div className="no-print" style={{
+          maxWidth: 900, margin: '0 auto 16px',
+          display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          {zones.map(zone => {
+            const active = zone.id === activeZoneId && !showSummary;
+            return renamingId === zone.id ? (
+              <form key={zone.id} onSubmit={e => { e.preventDefault(); onRenameZone?.(zone.id, renameValue || zone.name); setRenamingId(null); }} style={{ display: 'flex', gap: 4 }}>
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={e => setRenameValue(e.target.value)}
+                  onBlur={() => { onRenameZone?.(zone.id, renameValue || zone.name); setRenamingId(null); }}
+                  style={{ padding: '5px 10px', borderRadius: 6, border: `1.5px solid ${C.hivis}`, fontSize: 13, fontFamily: 'inherit', width: 130 }}
+                />
+              </form>
+            ) : (
+              <div key={zone.id} style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+                <button
+                  onClick={() => { setShowSummary(false); onSwitchZone?.(zone); }}
+                  style={{
+                    padding: '6px 14px', borderRadius: '6px 0 0 6px',
+                    border: `1.5px solid ${active ? C.hivis : 'var(--border-default)'}`,
+                    borderRight: 'none',
+                    background: active ? C.hivis : 'var(--bg-surface)',
+                    color: active ? C.ink900 : 'var(--fg-default)',
+                    fontSize: 13, fontWeight: active ? 700 : 500,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >{zone.name}</button>
+                <button
+                  onClick={() => { setRenamingId(zone.id); setRenameValue(zone.name); }}
+                  title="Rename zone"
+                  style={{
+                    padding: '6px 7px', borderRadius: 0,
+                    border: `1.5px solid ${active ? C.hivis : 'var(--border-default)'}`,
+                    borderRight: 'none', borderLeft: 'none',
+                    background: active ? C.hivis : 'var(--bg-surface)',
+                    color: active ? C.ink900 : 'var(--fg-subtle)',
+                    fontSize: 11, cursor: 'pointer', lineHeight: 1,
+                  }}
+                >✎</button>
+                {zones.length > 1 && (
+                  <button
+                    onClick={() => onDeleteZone?.(zone.id)}
+                    title="Delete zone"
+                    style={{
+                      padding: '6px 7px', borderRadius: '0 6px 6px 0',
+                      border: `1.5px solid ${active ? C.hivis : 'var(--border-default)'}`,
+                      background: active ? C.hivis : 'var(--bg-surface)',
+                      color: active ? C.ink900 : 'var(--fg-subtle)',
+                      fontSize: 11, cursor: 'pointer', lineHeight: 1,
+                    }}
+                  >✕</button>
+                )}
+              </div>
+            );
+          })}
+          <button
+            onClick={() => { setShowSummary(true); }}
+            style={{
+              padding: '6px 14px', borderRadius: 6,
+              border: `1.5px solid ${showSummary ? C.info : 'var(--border-default)'}`,
+              background: showSummary ? '#E5F1FF' : 'var(--bg-surface)',
+              color: showSummary ? C.info : 'var(--fg-subtle)',
+              fontSize: 13, fontWeight: showSummary ? 700 : 500,
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >⊞ Summary</button>
+          {onAddZone && (
+            <button
+              onClick={onAddZone}
+              style={{
+                padding: '6px 14px', borderRadius: 6,
+                border: '1.5px dashed var(--border-default)',
+                background: 'transparent', color: 'var(--fg-subtle)',
+                fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >+ Add Zone</button>
+          )}
+        </div>
+      )}
+
+      {/* Project summary view */}
+      {showSummary && zones.length > 1 && (
+        <ProjectSummary zones={zones} onSwitchZone={z => { setShowSummary(false); onSwitchZone?.(z); }} />
+      )}
+
       {/* Report body */}
-      <div className="report-page" style={{
+      {!showSummary && <div className="report-page" style={{
         maxWidth: 900, margin: '0 auto', background: 'var(--bg-surface)',
         borderRadius: 12, boxShadow: 'var(--elev-2)', padding: '32px 40px',
       }}>
@@ -514,29 +678,23 @@ export function ReportView({ result: r, inputs: inp, onBack, onNew, history = []
           )}
         </Section>
 
-        {/* TGS Schematic */}
-        {!r.noSignSchedule && (
-          <Section title="Traffic Guidance Scheme — Schematic Layout">
-            <div style={{
-              border: '1px solid var(--border-default)', borderRadius: 8,
-              overflow: 'hidden', background: 'var(--paper-50)',
-            }}>
-              <TGSSchematic result={r} inputs={inp} />
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 6 }}>
-              Schematic representation only — not to scale. All dimensions are calculated values; actual field placement must be verified by a qualified Traffic Management Designer. Refer to sign schedule tables below for precise positions.
-            </div>
-          </Section>
-        )}
+        {/* TGS Schematic — always shown, template varies by works type */}
+        <Section title="Traffic Guidance Scheme — Schematic Layout">
+          <div style={{
+            border: '1px solid var(--border-default)', borderRadius: 8,
+            overflow: 'hidden', background: 'var(--paper-50)',
+          }}>
+            <TGSSchematic result={r} inputs={inp} />
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 6 }}>
+            Schematic representation only — not to scale. All dimensions are calculated values; actual field placement must be verified by a qualified Traffic Management Designer.{!r.noSignSchedule && ' Refer to sign schedule tables below for precise positions.'}
+          </div>
+        </Section>
 
-        {r.noSignSchedule && (
-          <Section title="Traffic Guidance Scheme">
-            <WarnBox
-              text={`${r.designStepName} does not use a standard advance warning sign schedule. Refer to the Design Step Criteria and Mandatory Requirements above for specific equipment and safety obligations for this design step.`}
-              kind="info"
-            />
-          </Section>
-        )}
+        {/* Advanced queue analysis */}
+        <Section title="Queue Analysis">
+          <QueueAnalysis result={r} inputs={inp} />
+        </Section>
 
         {/* Temp speed justification */}
         <Section title="Recommended Temp Speed — Justification">
@@ -653,6 +811,105 @@ export function ReportView({ result: r, inputs: inp, onBack, onNew, history = []
           </div>
         </div>
 
+      </div>}
+
+      {showFieldView && (
+        <FieldView
+          result={r}
+          inputs={inp}
+          zoneName={zones.find(z => z.id === activeZoneId)?.name}
+          onClose={() => setShowFieldView(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── ProjectSummary ──────────────────────────────────────────────
+
+function ProjectSummary({ zones, onSwitchZone }: { zones: Zone[]; onSwitchZone: (z: Zone) => void }) {
+  const combined = new Map<string, { item: string; quantity: number; specification: string; zones: string[] }>();
+  for (const zone of zones) {
+    for (const eq of zone.result.equipment) {
+      const qty = parseInt(eq.quantity, 10) || 1;
+      const key = `${eq.item}||${eq.specification}`;
+      if (combined.has(key)) {
+        const existing = combined.get(key)!;
+        existing.quantity += qty;
+        existing.zones.push(zone.name);
+      } else {
+        combined.set(key, { item: eq.item, quantity: qty, specification: eq.specification, zones: [zone.name] });
+      }
+    }
+  }
+
+  const projectName = zones[0]?.inputs.projectName || 'Project';
+
+  return (
+    <div style={{ maxWidth: 900, margin: '0 auto', fontFamily: 'var(--font-ui)' }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 12, boxShadow: 'var(--elev-2)', padding: '28px 36px', marginBottom: 24 }}>
+        <h2 style={{ margin: '0 0 20px', fontSize: 20, fontWeight: 700, color: 'var(--fg-default)' }}>
+          {projectName} — Project Summary
+        </h2>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12, marginBottom: 28 }}>
+          {zones.map(zone => (
+            <button
+              key={zone.id}
+              onClick={() => onSwitchZone(zone)}
+              style={{
+                textAlign: 'left', padding: '14px 16px', borderRadius: 10,
+                border: '1.5px solid var(--border-default)',
+                background: 'var(--bg-surface)', cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.hivis, marginBottom: 4 }}>{zone.name}</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginBottom: 8 }}>
+                {zone.inputs.location || zone.inputs.roadName || '—'}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#FFF3E9', color: C.hivis }}>{zone.result.designStepName}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'var(--paper-50)', color: 'var(--fg-subtle)' }}>{zone.result.recommendedTempSpeed} km/h</span>
+                {zone.result.warnings.length > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#FFF7D6', color: '#856404' }}>{zone.result.warnings.length} warning{zone.result.warnings.length > 1 ? 's' : ''}</span>
+                )}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                {[['Taper', `${zone.result.mergeTaperLength} m`], ['Buffer', `${zone.result.bufferZoneLength} m`], ['Sight dist.', `${zone.result.sightDistanceM} m`], ['Sign spacing', `${zone.result.approachSignSpacing} m`]].map(([l, v]) => (
+                  <div key={l} style={{ fontSize: 12 }}>
+                    <span style={{ color: 'var(--fg-subtle)' }}>{l}: </span><strong>{v}</strong>
+                  </div>
+                ))}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: 'var(--fg-subtle)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+          Combined Equipment List
+        </h3>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr>{['Item', 'Total Qty', 'Specification', 'Zones'].map(h => (
+                <th key={h} style={{ textAlign: 'left', padding: '8px 12px', background: 'var(--paper-50)', fontSize: 11, fontWeight: 700, color: 'var(--fg-subtle)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '1.5px solid var(--border-default)' }}>{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {[...combined.values()].map((row, i) => (
+                <tr key={i} style={{ background: i % 2 === 1 ? 'var(--paper-50)' : 'transparent' }}>
+                  <td style={{ padding: '9px 12px', borderBottom: '1px solid var(--border-default)' }}>{row.item}</td>
+                  <td style={{ padding: '9px 12px', borderBottom: '1px solid var(--border-default)', fontWeight: 700, color: C.hivis }}>{row.quantity}</td>
+                  <td style={{ padding: '9px 12px', borderBottom: '1px solid var(--border-default)', color: 'var(--fg-muted)' }}>{row.specification}</td>
+                  <td style={{ padding: '9px 12px', borderBottom: '1px solid var(--border-default)', fontSize: 12, color: 'var(--fg-subtle)' }}>{[...new Set(row.zones)].join(', ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 12, fontSize: 12, color: 'var(--fg-subtle)' }}>
+          Quantities summed across all zones. Verify site-specific requirements with a qualified Traffic Management Coordinator.
+        </div>
       </div>
     </div>
   );
